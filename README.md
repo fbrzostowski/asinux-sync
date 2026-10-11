@@ -20,6 +20,20 @@ silnik synchronizacji (`asinux_sync/engine.py`) i jeden moduł — `background`
 - PyGObject (`python3-gi`, dla modułów czytających GSettings)
 - [`rclone`](https://rclone.org/) zainstalowany i w `$PATH`
 
+## Instalacja na nowym komputerze
+
+```bash
+# Fedora + GNOME: pakiety, repozytoria w /opt, launcher i dostawca wyszukiwania
+curl -fsSL https://raw.githubusercontent.com/fbrzostowski/asinux-sync/master/setup.sh | bash
+
+# albo z klona, kopiując dokładny stan ASC z innego komputera (także niewypchnięte panele)
+./setup.sh --asc-from uzytkownik@inny-pc:/opt/asinux-system-configuration/
+```
+
+Skrypt jest idempotentny (ponowne uruchomienie aktualizuje) i ma `--dry-run`, `--no-packages`,
+`--no-asc`, `--sync-repo`, `--prefix`. Niczego nie nadpisuje bez pytania: katalog docelowy, który nie
+jest checkoutem gita i nie jest pusty, kończy się błędem, a `rsync` działa bez `--delete`.
+
 ## Użycie
 
 ```bash
