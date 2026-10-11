@@ -19,6 +19,7 @@ from asinux_sync.modules.default_apps import DefaultAppsModule
 from asinux_sync.modules.dock import DockModule
 from asinux_sync.modules.extensions import ExtensionsModule
 from asinux_sync.modules.layout import LayoutModule
+from asinux_sync.modules.multitasking import MultitaskingModule
 from asinux_sync.modules.power import PowerModule
 from asinux_sync.modules.profile_picture import ProfilePictureModule
 from asinux_sync.modules.shortcuts import ShortcutsModule
@@ -470,6 +471,45 @@ def test_layout_unavailable_without_dconf(assets_dir, installed_extensions, monk
     monkeypatch.setattr(extension_prefs.subprocess, "run", missing)
     with pytest.raises(ModuleUnavailable):
         LayoutModule().capture(assets_dir)
+
+
+# -- multitasking ---------------------------------------------------------------------------------
+
+def test_multitasking_items_mirror_the_control_center_rows():
+    assert [i.id for i in MultitaskingModule().list_items()] == [
+        "hot_corner", "window_resize", "reopen_windows", "workspace_mode", "workspace_count",
+        "multi_monitor", "app_switching"]
+
+
+def test_multitasking_roundtrip_and_items_are_independent(assets_dir):
+    interface, mutter = gs("org.gnome.desktop.interface"), gs("org.gnome.mutter")
+    wm, session = gs("org.gnome.desktop.wm.preferences"), gs("org.gnome.desktop.session")
+    switcher = gs("org.gnome.shell.app-switcher")
+    interface.set_boolean("enable-hot-corners", False)
+    mutter.set_boolean("edge-tiling", False)
+    mutter.set_boolean("dynamic-workspaces", False)
+    mutter.set_boolean("workspaces-only-on-primary", True)
+    wm.set_int("num-workspaces", 4)
+    session.set_boolean("save-restore", False)
+    switcher.set_boolean("current-workspace-only", True)
+
+    def mutate():
+        interface.set_boolean("enable-hot-corners", True)
+        mutter.set_boolean("dynamic-workspaces", True)
+        wm.set_int("num-workspaces", 2)
+        switcher.set_boolean("current-workspace-only", False)
+
+    roundtrip(MultitaskingModule(), assets_dir, mutate)
+    assert interface.get_boolean("enable-hot-corners") is False
+    assert wm.get_int("num-workspaces") == 4
+    assert switcher.get_boolean("current-workspace-only") is True
+
+    captured = MultitaskingModule().capture(assets_dir)
+    interface.set_boolean("enable-hot-corners", True)
+    wm.set_int("num-workspaces", 9)
+    MultitaskingModule().apply(captured, assets_dir, disabled_items={"workspace_count"})
+    assert interface.get_boolean("enable-hot-corners") is False  # applied
+    assert wm.get_int("num-workspaces") == 9  # that row is switched off here
 
 
 # -- power --------------------------------------------------------------------------------------

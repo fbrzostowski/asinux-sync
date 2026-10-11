@@ -65,6 +65,7 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 | `background` | tapeta pulpitu (jasna/ciemna, dopasowanie, własne dynamiczne tapety z obrazami), obraz ekranu blokady, live wallpaper Hanabi, Damask |
 | `appearance` | motyw aplikacji (GTK), ikony, motyw kursora, rozmiar kursora, jasny/ciemny, kolor akcentu, motyw shella; motywy zainstalowane przez użytkownika jadą jako archiwa |
 | `window` | przyciski paska tytułu, kliknięcia paska tytułu, focus, klawisz modyfikatora okien, nowe okna |
+| `multitasking` | wiersze panelu Multitasking: hot corner, zmiana rozmiaru okien przy krawędziach, ponowne otwieranie okien po logowaniu, dynamiczne/stałe obszary robocze i ich liczba, obszary na monitorach, przełączanie aplikacji |
 | `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
 | `extensions` | rozszerzenia GNOME Shell — dla każdego menu: „Extension and prefs” (stan + ustawienia), „Only extension” (tylko stan), „Off” |
 | `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts |
