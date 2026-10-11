@@ -7,7 +7,7 @@ import gi
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, GLib, GObject, Gtk
 
 from asinux_sync import config as config_module
 from asinux_sync import daemon as daemon_module
@@ -18,6 +18,8 @@ from asinux_sync import ui_cache
 from asinux_sync.cloud.rclone import RcloneBackend, RcloneError, is_installed
 from asinux_sync.engine import SyncEngine
 from asinux_sync.modules import REGISTRY
+
+from .search import matches
 
 PROVIDER = "onedrive"
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
@@ -515,16 +517,83 @@ class SyncWindow(Adw.ApplicationWindow):
             catalog = registry_module.build_catalog(self.modules)
 
         groups = {}
+        rows_by_group = {}
         for module_id, module in self.modules.items():
             items = catalog.get(module_id)
             if items is None:
                 items = [{"id": i.id, "name": i.name, "description": i.description} for i in module.list_items()]
             if module.category not in groups:
                 groups[module.category] = Adw.PreferencesGroup(title=module.category)
+                rows_by_group[module.category] = []
                 page.add(groups[module.category])
-            groups[module.category].add(
-                self._module_row(device["id"], module_id, module, items, disabled, is_me))
-        self.nav.push(_page(device.get("name", "Device"), page))
+            row = self._module_row(device["id"], module_id, module, items, disabled, is_me)
+            row.sync_text = f"{module.display_name} {module.description} {module.category}"
+            groups[module.category].add(row)
+            rows_by_group[module.category].append(row)
+
+        no_results = Adw.PreferencesGroup(visible=False)
+        no_results.add(Adw.ActionRow(title="Nothing matches your search", use_markup=False))
+        page.add(no_results)
+
+        def filter_rows(query):
+            query = query.strip()
+            any_visible = False
+            for category, group in groups.items():
+                group_visible = False
+                for row in rows_by_group[category]:
+                    children = getattr(row, "sync_children", [])
+                    module_match = matches(query, row.sync_text)
+                    matching = [child for child, text in children if matches(query, text)]
+                    visible = not query or module_match or bool(matching)
+                    row.set_visible(visible)
+                    for child, _text in children:
+                        child.set_visible(not query or module_match or child in matching)
+                    if isinstance(row, Adw.ExpanderRow):
+                        # Open the rows whose parts matched, so the hit is on screen.
+                        row.set_expanded(bool(query) and bool(matching))
+                    group_visible = group_visible or visible
+                group.set_visible(group_visible)
+                any_visible = any_visible or group_visible
+            intro.set_visible(not query)
+            no_results.set_visible(bool(query) and not any_visible)
+
+        self.nav.push(self._searchable_page(device.get("name", "Device"), page, filter_rows))
+
+    def _searchable_page(self, title, content, on_query):
+        """A page with a search button (and Ctrl+F, or just start typing)."""
+        view = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        toggle = Gtk.ToggleButton(icon_name="system-search-symbolic", tooltip_text="Search (Ctrl+F)")
+        header.pack_end(toggle)
+        entry = Gtk.SearchEntry(placeholder_text="Search what to sync", hexpand=True)
+        bar = Gtk.SearchBar()
+        bar.set_child(Adw.Clamp(maximum_size=420, child=entry))
+        bar.connect_entry(entry)
+        bar.set_key_capture_widget(view)
+        toggle.bind_property(
+            "active", bar, "search-mode-enabled", GObject.BindingFlags.BIDIRECTIONAL | GObject.BindingFlags.SYNC_CREATE)
+
+        def on_mode_changed(search_bar, _pspec):
+            if not search_bar.get_search_mode():
+                entry.set_text("")
+                on_query("")
+
+        def open_search(*_args):
+            toggle.set_active(True)
+            entry.grab_focus()
+            return True
+
+        bar.connect("notify::search-mode-enabled", on_mode_changed)
+        entry.connect("search-changed", lambda e: on_query(e.get_text()))
+        shortcuts = Gtk.ShortcutController()
+        shortcuts.add_shortcut(Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("<Control>f"), Gtk.CallbackAction.new(open_search)))
+        view.add_controller(shortcuts)
+
+        view.add_top_bar(header)
+        view.add_top_bar(bar)
+        view.set_content(content)
+        return Adw.NavigationPage(title=title, child=view)
 
     def _module_row(self, device_id, module_id, module, items, disabled, is_me):
         items = [item for item in items if not item.get("hidden")]
@@ -538,17 +607,19 @@ class SyncWindow(Adw.ApplicationWindow):
         row = Adw.ExpanderRow(
             title=module.display_name, subtitle=module.description, use_markup=False,
             show_enable_switch=True, enable_expansion=module_id not in disabled)
+        row.sync_children = []
         row.connect("notify::enable-expansion", self._on_module_toggled, device_id, module_id, is_me)
         for item in items:
             if item.get("modes"):
-                row.add_row(self._mode_row(device_id, module_id, item, disabled, is_me))
-                continue
-            key = f"{module_id}.{item['id']}"
-            item_row = Adw.SwitchRow(
-                title=item["name"], subtitle=item.get("description", ""),
-                active=key not in disabled, use_markup=False)
-            item_row.connect("notify::active", self._on_module_toggled, device_id, key, is_me)
+                item_row = self._mode_row(device_id, module_id, item, disabled, is_me)
+            else:
+                key = f"{module_id}.{item['id']}"
+                item_row = Adw.SwitchRow(
+                    title=item["name"], subtitle=item.get("description", ""),
+                    active=key not in disabled, use_markup=False)
+                item_row.connect("notify::active", self._on_module_toggled, device_id, key, is_me)
             row.add_row(item_row)
+            row.sync_children.append((item_row, f"{item['name']} {item.get('description', '')}"))
         return row
 
     def _mode_row(self, device_id, module_id, item, disabled, is_me):

@@ -249,3 +249,78 @@ def test_collection_items_keep_entries_this_device_does_not_have(tmp_path):
     del store_b["ext2"]
     assert b.sync_once() == "pushed"
     assert cloud_profile(cloud)["modules"]["layout"]["items"]["all"]["settings"] == {"ext1": "b1", "ext2": "a2"}
+
+
+def _synced_pair(tmp_path):
+    cloud = tmp_path / "cloud"
+    a, store_a = make_device(tmp_path, "a", cloud)
+    b, store_b = make_device(tmp_path, "b", cloud)
+    store_a.update({"background.a": "wall1", "theme.a": "dark"})
+    a.sync_once()
+    b.sync_once()
+    assert a.sync_once() == "idle" and b.sync_once() == "idle"
+    return cloud, (a, store_a), (b, store_b)
+
+
+def test_a_change_made_here_is_uploaded_not_overwritten_by_the_cloud(tmp_path):
+    cloud, (a, store_a), (b, store_b) = _synced_pair(tmp_path)
+
+    store_b["background.a"] = "wall-from-b"
+    assert b.sync_once() == "pushed"  # the cloud now holds B's wallpaper
+    store_a["background.a"] = "my-new-wall"  # A changes it before it has seen B's change
+
+    assert a.sync_once() == "pushed"  # A's edit wins and is uploaded...
+    assert store_a["background.a"] == "my-new-wall"  # ...instead of B's value being downloaded over it
+    assert cloud_profile(cloud)["modules"]["background"]["items"]["a"] == {"value": "my-new-wall"}
+    assert b.sync_once() == "pulled" and store_b["background.a"] == "my-new-wall"
+
+
+def test_changes_to_different_settings_are_all_kept(tmp_path):
+    cloud, (a, store_a), (b, store_b) = _synced_pair(tmp_path)
+
+    store_a["background.a"] = "wall-from-a"
+    store_b["theme.a"] = "light-from-b"
+    assert b.sync_once() == "pushed"  # B uploads its theme change first
+    assert a.sync_once() == "pushed"  # A uploads its wallpaper AND takes B's theme
+    assert store_a == {"background.a": "wall-from-a", "theme.a": "light-from-b"}
+    assert b.sync_once() == "pulled"
+    assert store_b == {"background.a": "wall-from-a", "theme.a": "light-from-b"}
+    assert a.sync_once() == "idle" and b.sync_once() == "idle"
+    items = {m: v["items"] for m, v in cloud_profile(cloud)["modules"].items()}
+    assert items == {"background": {"a": {"value": "wall-from-a"}}, "theme": {"a": {"value": "light-from-b"}}}
+
+
+def test_switching_a_category_on_takes_the_cloud_values_when_it_has_them(tmp_path):
+    cloud = tmp_path / "cloud"
+    a, store_a = make_device(tmp_path, "a", cloud)
+    b, store_b = make_device(tmp_path, "b", cloud)
+    store_a.update({"theme.a": "cloud-value"})
+    a.sync_once()
+
+    store_b["theme.a"] = "my-own"
+    b.sync_once({"theme"})  # theme switched off on B: nothing happens to it
+    assert store_b["theme.a"] == "my-own"
+
+    assert b.sync_once() == "pulled"  # switched on later: the cloud's value wins, B's is not uploaded
+    assert store_b["theme.a"] == "cloud-value"
+    assert cloud_profile(cloud)["modules"]["theme"]["items"]["a"] == {"value": "cloud-value"}
+
+
+def test_switching_a_category_on_uploads_it_when_the_cloud_has_nothing(tmp_path):
+    cloud = tmp_path / "cloud"
+    a, store_a = make_device(tmp_path, "a", cloud)
+    store_a.update({"background.a": "wall"})
+    a.sync_once({"theme"})
+    store_a["theme.a"] = "dark"
+    assert a.sync_once() == "pushed"
+    assert cloud_profile(cloud)["modules"]["theme"]["items"]["a"] == {"value": "dark"}
+
+
+def test_only_the_item_that_changed_is_uploaded(tmp_path):
+    cloud, (a, store_a), (b, store_b) = _synced_pair(tmp_path)
+    before = cloud_profile(cloud)
+    store_a["background.a"] = "new"
+    a.sync_once()
+    after = cloud_profile(cloud)
+    assert after["modules"]["theme"] == before["modules"]["theme"]
+    assert after["revision"] != before["revision"]
