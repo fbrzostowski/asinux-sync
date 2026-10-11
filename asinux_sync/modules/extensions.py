@@ -42,13 +42,13 @@ class ExtensionsModule(SyncModule):
         except ModuleUnavailable as exc:  # no dconf: on/off still syncs
             logger.info("extension preferences unavailable here: %s", exc)
             return None
-        return {"settings": settings} if settings.strip() else None
+        return {"settings": settings} if settings else None
 
     def apply_item(self, item_id: str, data: dict, assets_dir: Path) -> None:
         if not item_id.endswith(PREFS):
             shell_extensions.set_enabled(item_id, bool(data.get("enabled")))
             return
         try:
-            extension_prefs.apply(item_id.removesuffix(PREFS), data.get("settings", ""))
+            extension_prefs.apply(item_id.removesuffix(PREFS), data.get("settings", {}))
         except ModuleUnavailable as exc:
             logger.info("extension preferences unavailable here: %s", exc)

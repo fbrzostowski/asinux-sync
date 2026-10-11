@@ -64,19 +64,23 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 |---|---|
 | `background` | tapeta pulpitu (jasna/ciemna, dopasowanie, własne dynamiczne tapety z obrazami), obraz ekranu blokady, live wallpaper Hanabi, Damask |
 | `appearance` | motyw aplikacji (GTK), ikony, motyw kursora, rozmiar kursora, jasny/ciemny, kolor akcentu, motyw shella; motywy zainstalowane przez użytkownika jadą jako archiwa |
+| `fonts` | czcionki: interfejs, dokumenty, monospace, tytuły okien, hinting, antialiasing (skala tekstu jest w Accessibility → Text size) |
 | `window` | przyciski paska tytułu, kliknięcia paska tytułu, focus, klawisz modyfikatora okien, nowe okna |
 | `multitasking` | wiersze panelu Multitasking: hot corner, zmiana rozmiaru okien przy krawędziach, ponowne otwieranie okien po logowaniu, dynamiczne/stałe obszary robocze i ich liczba, obszary na monitorach, przełączanie aplikacji |
 | `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
+| `app_grid` | kolejność aplikacji na siatce i foldery aplikacji |
 | `extensions` | rozszerzenia GNOME Shell — dla każdego menu: „Extension and prefs” (stan + ustawienia), „Only extension” (tylko stan), „Off” |
-| `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts |
+| `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts. Ścieżki dconf są czytane ze schematów każdego rozszerzenia (nie zgadywane z nazwy), a zapis jest ograniczony do folderów, które rozszerzenie samo deklaruje |
 | `keyboard` | źródła wejścia, przełączanie per okno, klawisz znaków alternatywnych, klawisz Compose, pozostałe opcje układu, powtarzanie klawiszy, wejście Emacs, klawisz przeglądu. Układ wybrany przy zakładaniu profilu jest wartością domyślną: staje się układem pierwszego urządzenia, a na kolejnych urządzeniach uzupełnia chmurę, jeśli nikt jeszcze nie zsynchronizował klawiatury |
 | `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
 | `mouse` | panel Mysz i touchpad: przycisk główny, prędkość i przyspieszenie myszy, kierunek przewijania, wklejanie środkowym przyciskiem; touchpad (włączony, wyłączanie podczas pisania, prędkość, kliknięcie dodatkowe, tapnięcie, metoda i kierunek przewijania) i pointing stick — te dwa tylko na komputerach z takim sprzętem |
 | `default_apps` | `~/.config/mimeapps.list` |
+| `search` | wyszukiwanie: aplikacje jako źródła wyników, ich kolejność i lokalizacje przeszukiwania plików |
 | `notifications` | panel Powiadomień: Nie przeszkadzać, powiadomienia na ekranie blokady oraz — osobny element dla każdej aplikacji — jej sześć przełączników (powiadomienia, dźwięk, banery, treść banerów, ekran blokady, treść na blokadzie) |
 | `accessibility` | wszystkie wiersze panelu Dostępność: widzenie, słuch, pisanie, wskazywanie i klikanie, powiększenie (25 elementów). Pominięte, bo klucz należy już do innego modułu: rozmiar kursora (Theme, icons and cursor), powtarzanie klawiszy (Keyboard) i aktywacja okna po najechaniu (Window behavior → Focus) |
 | `region` | język i formaty konta (część „Your Account” strony Region & Language; stosowane po następnym logowaniu). Ekran logowania jest systemowy, wymaga administratora i nie jest synchronizowany |
 | `datetime` | format czasu, pierwszy dzień tygodnia, zegar i kalendarz w górnym pasku, automatyczna strefa czasowa. Data, czas sieciowy i strefa czasowa są systemowe (`timedated`, wymagają administratora) i nie są synchronizowane |
+| `night_light` | Nocna zmiana: włączenie, harmonogram, temperatura barwy |
 | `power` | wiersze panelu zasilania: przycisk zasilania, procent baterii, przyciemnianie, jasność automatyczna, oszczędzanie baterii, wygaszanie ekranu, usypianie na baterii i przy zasilaniu |
 | `profile_picture` | zdjęcie konta (AccountsService) |
 

@@ -16,12 +16,15 @@ SHELL = "org.gnome.shell"
 ENABLED_KEY = "enabled-extensions"
 
 
-def installed() -> dict[str, str]:
-    """uuid -> display name, user extensions taking precedence over system ones."""
+def _extension_dirs() -> list[Path]:
+    """Folders that hold extensions, user ones before system ones."""
     roots = [Path(GLib.get_user_data_dir())] + [Path(d) for d in GLib.get_system_data_dirs()]
-    found: dict[str, str] = {}
-    for root in roots:
-        directory = root / "gnome-shell" / "extensions"
+    return [root / "gnome-shell" / "extensions" for root in roots]
+
+
+def _scan() -> dict[str, tuple[str, Path]]:
+    found: dict[str, tuple[str, Path]] = {}
+    for directory in _extension_dirs():
         if not directory.is_dir():
             continue
         for folder in sorted(directory.iterdir()):
@@ -29,8 +32,18 @@ def installed() -> dict[str, str]:
                 metadata = json.loads((folder / "metadata.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue  # not an extension (stray files, half-installed ones)
-            found.setdefault(metadata.get("uuid") or folder.name, metadata.get("name") or folder.name)
+            found.setdefault(metadata.get("uuid") or folder.name, (metadata.get("name") or folder.name, folder))
     return found
+
+
+def installed() -> dict[str, str]:
+    """uuid -> display name, user extensions taking precedence over system ones."""
+    return {uuid: name for uuid, (name, _folder) in _scan().items()}
+
+
+def extension_dir(uuid: str) -> Path | None:
+    entry = _scan().get(uuid)
+    return entry[1] if entry else None
 
 
 def is_enabled(uuid: str) -> bool:

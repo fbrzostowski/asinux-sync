@@ -20,7 +20,7 @@ class LayoutModule(SyncModule):
         settings = {}
         for uuid in sorted(shell_extensions.installed()):
             dump = extension_prefs.dump(uuid)
-            if dump.strip():
+            if dump:
                 settings[uuid] = dump
         return {"settings": settings} if settings else None
 

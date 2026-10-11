@@ -3,6 +3,7 @@ capture is identical (otherwise the background service would push forever)."""
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,10 @@ from asinux_sync.modules.default_apps import DefaultAppsModule
 from asinux_sync.modules.dock import DockModule
 from asinux_sync.modules.extensions import ExtensionsModule
 from asinux_sync.modules.layout import LayoutModule
+from asinux_sync.modules.fonts import FontsModule
+from asinux_sync.modules.night_light import NightLightModule
+from asinux_sync.modules.search import SearchModule
+from asinux_sync.modules.app_grid import AppGridModule
 from asinux_sync.modules import mouse, notifications
 from asinux_sync.modules.keyboard import KeyboardModule
 from asinux_sync.modules.mouse import MouseModule
@@ -390,7 +395,7 @@ def test_extension_and_prefs(assets_dir, installed_extensions, dconf):
     captured = module.capture(assets_dir)
     assert captured["items"] == {
         "dash@x.org": {"enabled": True},
-        "dash@x.org#prefs": {"settings": "[/]\ndock-position='BOTTOM'\n"},
+        "dash@x.org#prefs": {"settings": {DASH: "[/]\ndock-position='BOTTOM'\n"}},
         "blur@y.org": {"enabled": False},
     }
 
@@ -446,7 +451,7 @@ def test_layout_is_one_switch_and_syncs_settings_but_never_enabled_state(assets_
     assert len(module.list_items()) == 1  # no per-extension drill-down
 
     captured = module.capture(assets_dir)
-    assert captured["items"]["all"] == {"settings": {"dash@x.org": "[/]\ndock-position='BOTTOM'\n"}}  # Blur has none
+    assert captured["items"]["all"] == {"settings": {"dash@x.org": {DASH: "[/]\ndock-position='BOTTOM'\n"}}}  # Blur has none
 
     dconf.folders[DASH] = "[/]\ndock-position='LEFT'\n"
     module.apply(captured, assets_dir)
@@ -456,6 +461,74 @@ def test_layout_is_one_switch_and_syncs_settings_but_never_enabled_state(assets_
     dconf.log.clear()
     module.apply(captured, assets_dir)
     assert dconf.log == ["dump"]  # already identical: nothing is rewritten
+
+
+def make_extension(root, uuid, schema_paths):
+    folder = root / uuid
+    (folder / "schemas").mkdir(parents=True)
+    (folder / "metadata.json").write_text(json.dumps({"uuid": uuid, "name": uuid}))
+    body = "".join(f'<schema id="org.x.s{i}" path="{p}"/>' for i, p in enumerate(schema_paths))
+    body += '<schema id="org.x.relocatable"/>'  # no path: nothing to read
+    (folder / "schemas" / "x.gschema.xml").write_text(f"<schemalist>{body}</schemalist>")
+
+
+def test_extension_settings_are_found_where_the_extension_really_keeps_them(tmp_path, monkeypatch):
+    make_extension(tmp_path, "ddterm@amezin.github.com", ["/com/github/amezin/ddterm/"])
+    make_extension(tmp_path, "just-perfection-desktop@just-perfection", ["/org/gnome/shell/extensions/just-perfection/"])
+    make_extension(tmp_path, "two@x", ["/org/gnome/shell/extensions/two/", "/org/example/two-extra"])
+    (tmp_path / "bare@x").mkdir()
+    (tmp_path / "bare@x" / "metadata.json").write_text(json.dumps({"uuid": "bare@x", "name": "Bare"}))
+    monkeypatch.setattr(shell_extensions, "_extension_dirs", lambda: [tmp_path])
+
+    assert extension_prefs.paths("ddterm@amezin.github.com") == ["/com/github/amezin/ddterm/"]
+    assert extension_prefs.paths("just-perfection-desktop@just-perfection") == ["/org/gnome/shell/extensions/just-perfection/"]
+    assert extension_prefs.paths("two@x") == ["/org/gnome/shell/extensions/two/", "/org/example/two-extra/"]
+    assert extension_prefs.paths("bare@x") == ["/org/gnome/shell/extensions/bare/"]  # no schema: the convention
+    assert extension_prefs.paths("not-installed@x") == ["/org/gnome/shell/extensions/not-installed/"]
+
+
+def test_subfolders_of_a_declared_folder_are_not_listed_again(tmp_path, monkeypatch):
+    make_extension(tmp_path, "copyous@x", [
+        "/org/gnome/shell/extensions/copyous/", "/org/gnome/shell/extensions/copyous/file-item/",
+        "/org/gnome/shell/extensions/copyous/link-item/"])
+    monkeypatch.setattr(shell_extensions, "_extension_dirs", lambda: [tmp_path])
+    assert extension_prefs.paths("copyous@x") == ["/org/gnome/shell/extensions/copyous/"]
+
+
+def test_a_schema_path_that_is_too_broad_is_ignored(tmp_path, monkeypatch):
+    make_extension(tmp_path, "evil@x", ["/org/gnome/shell/", "/org/gnome/", "/org/gnome/shell/extensions/"])
+    monkeypatch.setattr(shell_extensions, "_extension_dirs", lambda: [tmp_path])
+    assert extension_prefs.paths("evil@x") == ["/org/gnome/shell/extensions/evil/"]
+
+
+def test_layout_reaches_extensions_with_non_standard_paths(assets_dir, tmp_path, monkeypatch):
+    make_extension(tmp_path, "ddterm@amezin.github.com", ["/com/github/amezin/ddterm/"])
+    monkeypatch.setattr(shell_extensions, "_extension_dirs", lambda: [tmp_path])
+    ddterm = "/com/github/amezin/ddterm/"
+    fake = FakeDconf({ddterm: "[/]\nwindow-size=0.5\n"})
+    monkeypatch.setattr(extension_prefs, "_dconf", fake)
+
+    captured = LayoutModule().capture(assets_dir)
+    assert captured["items"]["all"]["settings"] == {"ddterm@amezin.github.com": {ddterm: "[/]\nwindow-size=0.5\n"}}
+    fake.folders[ddterm] = "[/]\nwindow-size=0.9\n"
+    LayoutModule().apply(captured, assets_dir)
+    assert fake.folders[ddterm] == "[/]\nwindow-size=0.5\n"
+
+
+def test_a_profile_cannot_write_outside_the_extensions_own_folders(tmp_path, monkeypatch):
+    make_extension(tmp_path, "dash@x.org", ["/org/gnome/shell/extensions/dash-to-dock/"])
+    monkeypatch.setattr(shell_extensions, "_extension_dirs", lambda: [tmp_path])
+    own, foreign = "/org/gnome/shell/extensions/dash-to-dock/", "/org/gnome/desktop/interface/"
+    fake = FakeDconf({})
+    monkeypatch.setattr(extension_prefs, "_dconf", fake)
+    extension_prefs.apply("dash@x.org", {own: "[/]\na=1\n", foreign: "[/]\ngtk-theme='evil'\n"})
+    assert own in fake.folders and foreign not in fake.folders
+
+
+def test_the_single_folder_format_of_earlier_versions_is_still_applied(installed_extensions, dconf):
+    dconf.folders.clear()
+    extension_prefs.apply("dash@x.org", "[/]\ndock-position='LEFT'\n")
+    assert dconf.folders[DASH] == "[/]\ndock-position='LEFT'\n"
 
 
 def test_layout_keeps_settings_of_extensions_missing_here():
@@ -518,6 +591,148 @@ def test_multitasking_roundtrip_and_items_are_independent(assets_dir):
     MultitaskingModule().apply(captured, assets_dir, disabled_items={"workspace_count"})
     assert interface.get_boolean("enable-hot-corners") is False  # applied
     assert wm.get_int("num-workspaces") == 9  # that row is switched off here
+
+
+# -- every GSettings key an item names must exist ---------------------------------------------------
+
+def test_every_gsettings_key_named_by_a_module_exists():
+    from asinux_sync.modules import gsettings_util
+    from asinux_sync.modules.gsettings_module import GSettingsModule
+
+    problems = []
+    for module_id, cls in REGISTRY.items():
+        if not issubclass(cls, GSettingsModule):
+            continue
+        for group in cls().group_specs():
+            for schema_id, keys in group.schemas.items():
+                schema = gsettings_util.schema(schema_id)
+                if schema is None:
+                    continue  # an optional component (Hanabi, User Themes, Tracker) isn't installed here
+                problems += [f"{module_id}.{group.id}: {schema_id} {k}" for k in keys if not schema.has_key(k)]
+    assert problems == []
+
+
+# -- fonts, night light, search, app grid ------------------------------------------------------------
+
+def test_fonts_items_and_roundtrip(assets_dir):
+    assert [i.id for i in FontsModule().list_items()] == [
+        "interface_font", "document_font", "monospace_font", "titlebar_font", "hinting", "antialiasing"]
+    interface, wm = gs("org.gnome.desktop.interface"), gs("org.gnome.desktop.wm.preferences")
+    interface.set_string("font-name", "Inter 11")
+    interface.set_string("monospace-font-name", "JetBrains Mono 10")
+    interface.set_string("font-hinting", "full")
+    wm.set_string("titlebar-font", "Inter Bold 11")
+    wm.set_boolean("titlebar-uses-system-font", False)
+
+    def mutate():
+        interface.set_string("font-name", "Cantarell 11")
+        interface.set_string("font-hinting", "none")
+        wm.set_string("titlebar-font", "Cantarell Bold 11")
+
+    roundtrip(FontsModule(), assets_dir, mutate)
+    assert interface.get_string("font-name") == "Inter 11" and interface.get_string("font-hinting") == "full"
+    assert wm.get_string("titlebar-font") == "Inter Bold 11"
+
+    captured = FontsModule().capture(assets_dir)
+    interface.set_string("font-name", "Cantarell 11")
+    FontsModule().apply(captured, assets_dir, disabled_items={"interface_font"})
+    assert interface.get_string("font-name") == "Cantarell 11"  # switched off here
+    assert interface.get_string("monospace-font-name") == "JetBrains Mono 10"
+
+
+def test_fonts_leave_the_text_scaling_factor_to_accessibility():
+    keys = {k for g in FontsModule.groups for ks in g.schemas.values() for k in ks}
+    assert "text-scaling-factor" not in keys
+
+
+def test_night_light_roundtrip(assets_dir):
+    color = gs("org.gnome.settings-daemon.plugins.color")
+    color.set_boolean("night-light-enabled", True)
+    color.set_boolean("night-light-schedule-automatic", False)
+    color.set_double("night-light-schedule-from", 21.5)
+    color.set_uint("night-light-temperature", 3200)
+
+    def mutate():
+        color.set_boolean("night-light-enabled", False)
+        color.set_double("night-light-schedule-from", 19.0)
+        color.set_uint("night-light-temperature", 4000)
+
+    roundtrip(NightLightModule(), assets_dir, mutate)
+    assert color.get_boolean("night-light-enabled") is True
+    assert color.get_double("night-light-schedule-from") == pytest.approx(21.5)
+    assert color.get_uint("night-light-temperature") == 3200
+    assert "night-light-last-coordinates" not in {
+        k for g in NightLightModule.groups for ks in g.schemas.values() for k in ks}
+
+
+def test_search_roundtrip_and_items(assets_dir):
+    assert [i.id for i in SearchModule().list_items()] == ["app_search", "providers", "result_order", "locations"]
+    providers = gs("org.gnome.desktop.search-providers")
+    providers.set_strv("disabled", ["org.gnome.Software.desktop"])
+    providers.set_strv("sort-order", ["b.desktop", "a.desktop"])
+    providers.set_boolean("disable-external", True)
+    tracker = gs("org.freedesktop.Tracker3.Miner.Files")
+    tracker.set_strv("index-recursive-directories", ["&DOCUMENTS", "/data"])
+
+    def mutate():
+        providers.set_strv("disabled", [])
+        providers.set_strv("sort-order", ["a.desktop"])
+        providers.set_boolean("disable-external", False)
+        tracker.set_strv("index-recursive-directories", ["$HOME"])
+
+    roundtrip(SearchModule(), assets_dir, mutate)
+    assert list(providers.get_strv("disabled")) == ["org.gnome.Software.desktop"]
+    assert list(providers.get_strv("sort-order")) == ["b.desktop", "a.desktop"]
+    assert list(tracker.get_strv("index-recursive-directories")) == ["&DOCUMENTS", "/data"]
+
+
+def folder_settings(name):
+    return gs("org.gnome.desktop.app-folders.folder", f"/org/gnome/desktop/app-folders/folders/{name}/")
+
+
+def test_app_grid_order_roundtrip(assets_dir):
+    shell = gs("org.gnome.shell")
+    layout = GLib.Variant.parse(GLib.VariantType("aa{sv}"), "[{'a.desktop': <{'position': <0>}>, 'b.desktop': <{'position': <1>}>}]")
+    shell.set_value("app-picker-layout", layout)
+
+    def mutate():
+        shell.reset("app-picker-layout")
+
+    roundtrip(AppGridModule(), assets_dir, mutate)
+    assert shell.get_value("app-picker-layout").equal(layout)
+
+
+def test_app_grid_folders_roundtrip_and_cleanup(assets_dir):
+    assert [i.id for i in AppGridModule().list_items()] == ["order", "folders"]
+    folders = gs("org.gnome.desktop.app-folders")
+    folders.set_strv("folder-children", ["Mine", "Games"])
+    mine = folder_settings("Mine")
+    mine.set_string("name", "My apps")
+    mine.set_boolean("translate", False)
+    mine.set_strv("apps", ["a.desktop", "b.desktop"])
+    folder_settings("Games").set_string("name", "Games")
+
+    def mutate():
+        folders.set_strv("folder-children", ["Games", "Other"])
+        mine.set_strv("apps", ["z.desktop"])
+        folder_settings("Other").set_string("name", "Only here")
+
+    roundtrip(AppGridModule(), assets_dir, mutate)
+    assert list(folders.get_strv("folder-children")) == ["Mine", "Games"]
+    assert list(mine.get_strv("apps")) == ["a.desktop", "b.desktop"] and mine.get_string("name") == "My apps"
+
+
+def test_app_grid_folders_dropped_by_the_profile_are_forgotten(assets_dir):
+    folders = gs("org.gnome.desktop.app-folders")
+    folders.set_strv("folder-children", ["Mine"])
+    folder_settings("Mine").set_string("name", "Mine")
+    captured = AppGridModule().capture(assets_dir)
+
+    folders.set_strv("folder-children", ["Mine", "Games"])
+    folder_settings("Games").set_string("name", "Games")
+    AppGridModule().apply(captured, assets_dir)
+    assert list(folders.get_strv("folder-children")) == ["Mine"]
+    assert folder_settings("Games").get_user_value("name") is None
 
 
 # -- date and time ----------------------------------------------------------------------------------

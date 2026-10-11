@@ -43,6 +43,8 @@ SCHEMAS = (
     "org.gnome.desktop.peripherals.keyboard", "org.gnome.desktop.a11y", "org.gnome.desktop.a11y.interface",
     "org.gnome.desktop.a11y.applications", "org.gnome.desktop.a11y.keyboard", "org.gnome.desktop.a11y.mouse",
     "org.gnome.desktop.a11y.magnifier", "org.gnome.desktop.sound",
+    "org.gnome.settings-daemon.plugins.color", "org.gnome.desktop.search-providers",
+    "org.freedesktop.Tracker3.Miner.Files", "org.gnome.desktop.app-folders",
     "org.gnome.desktop.calendar", "org.gnome.desktop.datetime", "org.gtk.Settings.FileChooser", "org.gnome.system.locale",
 )
 CUSTOM = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
@@ -68,6 +70,8 @@ def clean_gsettings():
         wipe(schema_id)
     for index in range(10):
         wipe(CUSTOM, CUSTOM_PATH % index)
+    for folder in ("Mine", "Games"):
+        wipe("org.gnome.desktop.app-folders.folder", f"/org/gnome/desktop/app-folders/folders/{folder}/")
     for child in ("app-a", "app-b", "org-x-y"):
         wipe("org.gnome.desktop.notifications.application", f"/org/gnome/desktop/notifications/application/{child}/")
     yield
