@@ -12,6 +12,10 @@ from gi.repository import Gio, GLib
 
 from asinux_sync import registry as registry_module
 from asinux_sync.modules import REGISTRY, background, extension_prefs, profile_picture, shell_extensions, shortcuts
+from asinux_sync.modules import region as region_module
+from asinux_sync.modules.accessibility import AccessibilityModule
+from asinux_sync.modules.datetime_settings import DateTimeModule
+from asinux_sync.modules.region import RegionModule
 from asinux_sync.modules.appearance import AppearanceModule
 from asinux_sync.modules.background import BackgroundModule
 from asinux_sync.modules.base import ModuleUnavailable
@@ -19,7 +23,9 @@ from asinux_sync.modules.default_apps import DefaultAppsModule
 from asinux_sync.modules.dock import DockModule
 from asinux_sync.modules.extensions import ExtensionsModule
 from asinux_sync.modules.layout import LayoutModule
-from asinux_sync.modules import notifications
+from asinux_sync.modules import mouse, notifications
+from asinux_sync.modules.keyboard import KeyboardModule
+from asinux_sync.modules.mouse import MouseModule
 from asinux_sync.modules.multitasking import MultitaskingModule
 from asinux_sync.modules.notifications import NotificationsModule
 from asinux_sync.modules.power import PowerModule
@@ -512,6 +518,357 @@ def test_multitasking_roundtrip_and_items_are_independent(assets_dir):
     MultitaskingModule().apply(captured, assets_dir, disabled_items={"workspace_count"})
     assert interface.get_boolean("enable-hot-corners") is False  # applied
     assert wm.get_int("num-workspaces") == 9  # that row is switched off here
+
+
+# -- date and time ----------------------------------------------------------------------------------
+
+def test_datetime_items_and_keys_exist():
+    from asinux_sync.modules import gsettings_util
+
+    assert [i.id for i in DateTimeModule().list_items()] == [
+        "auto_timezone", "time_format", "first_weekday", "clock_weekday", "clock_date", "clock_seconds", "week_numbers"]
+    missing = [(s, k) for g in DateTimeModule.groups for s, ks in g.schemas.items() for k in ks
+               if gsettings_util.schema(s) is None or not gsettings_util.schema(s).has_key(k)]
+    assert missing == []
+
+
+def test_datetime_roundtrip_and_items_are_independent(assets_dir):
+    interface, calendar = gs("org.gnome.desktop.interface"), gs("org.gnome.desktop.calendar")
+    chooser = gs("org.gtk.Settings.FileChooser")
+    interface.set_string("clock-format", "24h")
+    chooser.set_string("clock-format", "24h")
+    interface.set_boolean("clock-show-seconds", False)
+    calendar.set_string("week-start-day", "sunday")
+    calendar.set_boolean("show-weekdate", False)
+    gs("org.gnome.desktop.datetime").set_boolean("automatic-timezone", True)
+
+    def mutate():
+        interface.set_string("clock-format", "12h")
+        chooser.set_string("clock-format", "12h")
+        interface.set_boolean("clock-show-seconds", True)
+        calendar.set_string("week-start-day", "monday")
+
+    roundtrip(DateTimeModule(), assets_dir, mutate)
+    assert interface.get_string("clock-format") == "24h" and chooser.get_string("clock-format") == "24h"
+    assert interface.get_boolean("clock-show-seconds") is False
+    assert calendar.get_string("week-start-day") == "sunday"
+
+    captured = DateTimeModule().capture(assets_dir)
+    calendar.set_string("week-start-day", "monday")
+    interface.set_string("clock-format", "12h")
+    DateTimeModule().apply(captured, assets_dir, disabled_items={"first_weekday"})
+    assert calendar.get_string("week-start-day") == "monday"  # switched off here
+    assert interface.get_string("clock-format") == "24h"
+
+
+# -- region and language -----------------------------------------------------------------------------
+
+class FakeAccounts:
+    def __init__(self, languages):
+        self.languages = list(languages)
+        self.calls = []
+
+    def get_cached_property(self, name):
+        return GLib.Variant("as", self.languages)
+
+    def call_sync(self, method, args, *_):
+        assert method == "SetLanguages"
+        self.languages = list(args.unpack()[0])
+        self.calls.append(self.languages)
+
+
+@pytest.fixture
+def accounts(monkeypatch):
+    fake = FakeAccounts(["en_US.UTF-8"])
+    monkeypatch.setattr(region_module, "_user_proxy", lambda: fake)
+    monkeypatch.setattr(region_module, "_locale_installed", lambda name: name != "xx_XX.UTF-8")
+    return fake
+
+
+def test_region_items_are_language_and_formats():
+    assert [i.id for i in RegionModule().list_items()] == ["language", "formats"]
+
+
+def test_region_roundtrip(assets_dir, accounts):
+    locale = gs("org.gnome.system.locale")
+    accounts.languages = ["pl_PL.UTF-8", "de_DE.UTF-8"]
+    locale.set_string("region", "de_DE.UTF-8")
+    module = RegionModule()
+    captured = module.capture(assets_dir)
+    assert captured["items"] == {"language": {"language": "pl_PL.UTF-8"}, "formats": {"region": "de_DE.UTF-8"}}
+
+    accounts.languages = ["en_US.UTF-8"]
+    locale.reset("region")
+    module.apply(captured, assets_dir)
+    assert accounts.languages == ["pl_PL.UTF-8", "de_DE.UTF-8"]  # [language, formats], like the panel stores it
+    assert locale.get_string("region") == "de_DE.UTF-8"
+    assert module.capture(assets_dir) == captured
+
+
+def test_region_formats_equal_to_language_are_stored_once(assets_dir, accounts):
+    RegionModule().apply({"items": {"language": {"language": "pl_PL.UTF-8"}, "formats": {"region": "pl_PL.UTF-8"}}}, assets_dir)
+    assert accounts.languages == ["pl_PL.UTF-8"]
+
+
+def test_region_clearing_formats_resets_the_key(assets_dir, accounts):
+    locale = gs("org.gnome.system.locale")
+    locale.set_string("region", "de_DE.UTF-8")
+    accounts.languages = ["pl_PL.UTF-8", "de_DE.UTF-8"]
+    RegionModule().apply({"items": {"formats": {"region": ""}}}, assets_dir)
+    assert locale.get_user_value("region") is None and accounts.languages == ["pl_PL.UTF-8"]
+
+
+def test_region_skips_a_locale_that_is_not_installed(assets_dir, accounts):
+    RegionModule().apply({"items": {"language": {"language": "xx_XX.UTF-8"}, "formats": {"region": "xx_XX.UTF-8"}}}, assets_dir)
+    assert accounts.calls == [] and accounts.languages == ["en_US.UTF-8"]
+    assert gs("org.gnome.system.locale").get_user_value("region") is None
+
+
+def test_region_items_can_be_switched_off_separately(assets_dir, accounts):
+    accounts.languages = ["pl_PL.UTF-8"]
+    captured = RegionModule().capture(assets_dir)
+    accounts.languages = ["en_US.UTF-8"]
+    RegionModule().apply(captured, assets_dir, disabled_items={"language"})
+    assert accounts.languages == ["en_US.UTF-8"]
+
+
+def test_region_locale_check_uses_locale_a(monkeypatch):
+    class Done:
+        stdout = "C\nen_US.utf8\npl_PL.utf8\n"
+
+    monkeypatch.setattr(region_module.subprocess, "run", lambda *a, **k: Done())
+    assert region_module._locale_installed("pl_PL.UTF-8") is True
+    assert region_module._locale_installed("de_DE.UTF-8") is False
+
+
+# -- accessibility --------------------------------------------------------------------------------
+
+def test_accessibility_items_mirror_the_control_center_pages():
+    ids = [i.id for i in AccessibilityModule().list_items()]
+    assert ids[0] == "menu" and "screen_reader" in ids and "bounce_keys" in ids and ids[-1] == "color_filters"
+    assert len(ids) == 25
+    # Keys another module already owns must not be synced twice.
+    owned_elsewhere = {"cursor-size", "repeat", "delay", "repeat-interval", "focus-mode"}
+    keys = {k for g in AccessibilityModule.groups for ks in g.schemas.values() for k in ks}
+    assert not owned_elsewhere & keys
+
+
+def test_every_accessibility_key_exists_in_the_installed_schemas():
+    from asinux_sync.modules import gsettings_util
+
+    missing = [(s, k) for g in AccessibilityModule.groups for s, ks in g.schemas.items() for k in ks
+               if gsettings_util.schema(s) is None or not gsettings_util.schema(s).has_key(k)]
+    assert missing == []
+
+
+def test_accessibility_roundtrip_and_items_are_independent(assets_dir):
+    iface, kbd = gs("org.gnome.desktop.a11y.interface"), gs("org.gnome.desktop.a11y.keyboard")
+    mag, mouse_a = gs("org.gnome.desktop.a11y.magnifier"), gs("org.gnome.desktop.a11y.mouse")
+    gs("org.gnome.desktop.interface").set_double("text-scaling-factor", 1.25)
+    iface.set_boolean("high-contrast", True)
+    iface.set_string("reduced-motion", "reduce")
+    kbd.set_boolean("stickykeys-enable", True)
+    kbd.set_int("slowkeys-delay", 400)
+    mag.set_double("mag-factor", 3.0)
+    mag.set_boolean("show-cross-hairs", True)
+    mouse_a.set_boolean("dwell-click-enabled", True)
+    gs("org.gnome.desktop.peripherals.mouse").set_int("double-click", 700)
+
+    def mutate():
+        gs("org.gnome.desktop.interface").set_double("text-scaling-factor", 1.0)
+        iface.set_boolean("high-contrast", False)
+        kbd.set_int("slowkeys-delay", 300)
+        mag.set_double("mag-factor", 1.5)
+
+    roundtrip(AccessibilityModule(), assets_dir, mutate)
+    assert gs("org.gnome.desktop.interface").get_double("text-scaling-factor") == pytest.approx(1.25)
+    assert iface.get_boolean("high-contrast") is True and kbd.get_int("slowkeys-delay") == 400
+    assert mag.get_double("mag-factor") == pytest.approx(3.0)
+    assert gs("org.gnome.desktop.peripherals.mouse").get_int("double-click") == 700
+
+    captured = AccessibilityModule().capture(assets_dir)
+    iface.set_boolean("high-contrast", False)
+    mag.set_double("mag-factor", 1.5)
+    AccessibilityModule().apply(captured, assets_dir, disabled_items={"high_contrast"})
+    assert iface.get_boolean("high-contrast") is False  # that item is switched off here
+    assert mag.get_double("mag-factor") == pytest.approx(3.0)
+
+
+# -- keyboard ----------------------------------------------------------------------------------------
+
+INPUT_S = "org.gnome.desktop.input-sources"
+
+
+def test_keyboard_items():
+    assert [i.id for i in KeyboardModule().list_items()] == [
+        "input_sources", "per_window", "alternate_key", "compose_key", "layout_options",
+        "key_repeat", "emacs_input", "overview_key"]
+
+
+def test_keyboard_roundtrip(assets_dir):
+    inp, kb = gs(INPUT_S), gs("org.gnome.desktop.peripherals.keyboard")
+    inp.set_value("sources", GLib.Variant("a(ss)", [("xkb", "pl"), ("xkb", "us+intl")]))
+    inp.set_boolean("per-window", True)
+    inp.set_strv("xkb-options", ["lv3:ralt_switch", "compose:ralt", "caps:escape"])
+    kb.set_uint("delay", 300)
+    kb.set_uint("repeat-interval", 20)
+    gs("org.gnome.desktop.interface").set_string("gtk-key-theme", "Emacs")
+    gs("org.gnome.mutter").set_string("overlay-key", "")
+
+    def mutate():
+        inp.set_value("sources", GLib.Variant("a(ss)", [("xkb", "de")]))
+        inp.set_boolean("per-window", False)
+        inp.set_strv("xkb-options", ["compose:menu", "ctrl:nocaps"])
+        kb.set_uint("delay", 500)
+
+    roundtrip(KeyboardModule(), assets_dir, mutate)
+    assert inp.get_value("sources").unpack() == [("xkb", "pl"), ("xkb", "us+intl")]
+    assert inp.get_boolean("per-window") is True
+    assert set(inp.get_strv("xkb-options")) == {"lv3:ralt_switch", "compose:ralt", "caps:escape"}
+    assert kb.get_uint("delay") == 300
+    assert gs("org.gnome.desktop.interface").get_string("gtk-key-theme") == "Emacs"
+    assert gs("org.gnome.mutter").get_string("overlay-key") == ""
+
+
+def test_each_xkb_item_only_touches_its_own_options(assets_dir):
+    inp = gs(INPUT_S)
+    inp.set_strv("xkb-options", ["lv3:ralt_switch", "compose:ralt", "caps:escape"])
+    module = KeyboardModule()
+    captured = module.capture(assets_dir)
+    assert captured["items"]["compose_key"] == {"options": ["compose:ralt"]}
+    assert captured["items"]["alternate_key"] == {"options": ["lv3:ralt_switch"]}
+    assert captured["items"]["layout_options"] == {"options": ["caps:escape"]}
+
+    inp.set_strv("xkb-options", ["compose:menu", "ctrl:nocaps"])
+    module.apply({"items": {"compose_key": captured["items"]["compose_key"]}}, assets_dir)
+    assert set(inp.get_strv("xkb-options")) == {"compose:ralt", "ctrl:nocaps"}  # only compose changed
+
+    module.apply(captured, assets_dir, disabled_items={"layout_options", "alternate_key"})
+    assert set(inp.get_strv("xkb-options")) == {"compose:ralt", "ctrl:nocaps"}
+
+
+def test_layout_validation_uses_the_xkb_catalog():
+    from asinux_sync import system_defaults as sd
+
+    if sd._xkb_catalog() is None:
+        pytest.skip("xkeyboard-config rules not installed")
+    assert sd.valid_keyboard_layout("pl") and sd.valid_keyboard_layout("us+dvorak")
+    assert not sd.valid_keyboard_layout("xx") and not sd.valid_keyboard_layout("pl+nope")
+    assert not sd.valid_keyboard_layout("")
+
+
+def test_apply_keyboard_layout_only_when_different():
+    from asinux_sync import system_defaults as sd
+
+    if sd._xkb_catalog() is None:
+        pytest.skip("xkeyboard-config rules not installed")
+    inp = gs(INPUT_S)
+    inp.set_value("sources", GLib.Variant("a(ss)", [("xkb", "pl"), ("xkb", "us")]))
+    assert sd.apply_keyboard_layout("pl") is False  # already first: the other sources are kept
+    assert len(inp.get_value("sources").unpack()) == 2
+    assert sd.apply_keyboard_layout("de") is True
+    assert inp.get_value("sources").unpack() == [("xkb", "de")]
+    assert sd.apply_keyboard_layout("not-a-layout") is False
+    assert inp.get_value("sources").unpack() == [("xkb", "de")]
+
+
+def test_keyboard_chosen_at_profile_creation_is_the_default(monkeypatch):
+    from asinux_sync import account_defaults
+
+    if __import__("asinux_sync.system_defaults", fromlist=["x"])._xkb_catalog() is None:
+        pytest.skip("xkeyboard-config rules not installed")
+    inp = gs(INPUT_S)
+
+    def current():
+        return inp.get_value("sources").unpack()
+
+    inp.set_value("sources", GLib.Variant("a(ss)", [("xkb", "us")]))
+    # a new profile: the chosen layout becomes this device's
+    assert account_defaults.apply_keyboard_default("pl", new_account=True, disabled=[], cloud_has_keyboard=lambda: True)
+    assert current() == [("xkb", "pl")]
+    # a device joining a profile whose cloud already has a keyboard: left alone
+    assert not account_defaults.apply_keyboard_default("de", new_account=False, disabled=[], cloud_has_keyboard=lambda: True)
+    assert current() == [("xkb", "pl")]
+    # ...but if nobody has synced one yet, the profile's choice fills the gap
+    assert account_defaults.apply_keyboard_default("de", new_account=False, disabled=[], cloud_has_keyboard=lambda: False)
+    assert current() == [("xkb", "de")]
+    # not when this device doesn't sync keyboard input sources
+    for off in (["keyboard"], ["keyboard.input_sources"]):
+        assert not account_defaults.apply_keyboard_default("fr", new_account=True, disabled=off, cloud_has_keyboard=lambda: False)
+    assert not account_defaults.apply_keyboard_default("", new_account=True, disabled=[], cloud_has_keyboard=lambda: False)
+    assert current() == [("xkb", "de")]
+
+
+# -- mouse and touchpad ----------------------------------------------------------------------------
+
+MOUSE_S, TOUCHPAD_S, STICK_S = mouse.MOUSE, mouse.TOUCHPAD, mouse.POINTING_STICK
+
+
+def hardware(monkeypatch, touchpad, stick):
+    monkeypatch.setattr(mouse, "_has_input_device", lambda prop: {
+        "ID_INPUT_TOUCHPAD": touchpad, "ID_INPUT_POINTINGSTICK": stick}[prop])
+
+
+def test_touchpad_items_exist_only_with_the_hardware(monkeypatch):
+    hardware(monkeypatch, touchpad=False, stick=False)
+    desktop = [i.id for i in MouseModule().list_items()]
+    assert desktop == ["mouse_primary_button", "mouse_speed", "mouse_acceleration",
+                       "mouse_scroll_direction", "middle_click_paste"]
+    hardware(monkeypatch, touchpad=True, stick=True)
+    laptop = [i.id for i in MouseModule().list_items()]
+    assert laptop[len(desktop):] == [
+        "touchpad_enabled", "touchpad_disable_while_typing", "touchpad_speed", "touchpad_secondary_click",
+        "touchpad_tap_to_click", "touchpad_scroll_method", "touchpad_scroll_direction",
+        "stick_speed", "stick_acceleration", "stick_scroll_method"]
+
+
+def test_mouse_roundtrip_and_items_are_independent(assets_dir, monkeypatch):
+    hardware(monkeypatch, touchpad=True, stick=True)
+    mouse_s, pad, stick = gs(MOUSE_S), gs(TOUCHPAD_S), gs(STICK_S)
+    mouse_s.set_boolean("left-handed", True)
+    mouse_s.set_double("speed", 0.4)
+    mouse_s.set_string("accel-profile", "flat")
+    pad.set_boolean("tap-to-click", False)
+    pad.set_boolean("natural-scroll", False)
+    pad.set_boolean("two-finger-scrolling-enabled", False)
+    pad.set_boolean("edge-scrolling-enabled", True)
+    pad.set_string("click-method", "areas")
+    stick.set_double("speed", -0.3)
+    gs("org.gnome.desktop.interface").set_boolean("gtk-enable-primary-paste", False)
+
+    def mutate():
+        mouse_s.set_boolean("left-handed", False)
+        mouse_s.set_double("speed", 0.9)
+        pad.set_boolean("edge-scrolling-enabled", False)
+        pad.set_boolean("two-finger-scrolling-enabled", True)
+        pad.set_boolean("tap-to-click", True)
+        stick.set_double("speed", 0.5)
+
+    roundtrip(MouseModule(), assets_dir, mutate)
+    assert mouse_s.get_boolean("left-handed") is True and mouse_s.get_double("speed") == pytest.approx(0.4)
+    assert pad.get_boolean("edge-scrolling-enabled") is True
+    assert pad.get_boolean("two-finger-scrolling-enabled") is False
+    assert pad.get_boolean("tap-to-click") is False
+    assert stick.get_double("speed") == pytest.approx(-0.3)
+    assert gs("org.gnome.desktop.interface").get_boolean("gtk-enable-primary-paste") is False
+
+    captured = MouseModule().capture(assets_dir)
+    pad.set_boolean("tap-to-click", True)
+    mouse_s.set_double("speed", 0.9)
+    MouseModule().apply(captured, assets_dir, disabled_items={"touchpad_tap_to_click"})
+    assert pad.get_boolean("tap-to-click") is True  # that row is switched off here
+    assert mouse_s.get_double("speed") == pytest.approx(0.4)
+
+
+def test_a_machine_without_a_touchpad_neither_uploads_nor_applies_touchpad_settings(assets_dir, monkeypatch):
+    hardware(monkeypatch, touchpad=False, stick=False)
+    pad = gs(TOUCHPAD_S)
+    pad.set_double("speed", 0.7)
+    module = MouseModule()
+    assert not any(item.startswith("touchpad") for item in module.capture(assets_dir)["items"])
+    # A profile from a laptop with a touchpad left at its defaults must not reset ours.
+    module.apply({"items": {"touchpad_speed": {"values": {TOUCHPAD_S: {}}}}}, assets_dir)
+    assert pad.get_double("speed") == pytest.approx(0.7)
 
 
 # -- notifications ----------------------------------------------------------------------------------

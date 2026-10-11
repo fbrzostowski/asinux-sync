@@ -38,6 +38,12 @@ SCHEMAS = (
     "org.gnome.mutter.keybindings", "org.gnome.mutter.wayland.keybindings",
     "org.gnome.settings-daemon.plugins.media-keys", "org.gnome.settings-daemon.plugins.power", "org.gnome.desktop.session",
     "org.gnome.shell.app-switcher", "org.gnome.desktop.notifications",
+    "org.gnome.desktop.peripherals.mouse", "org.gnome.desktop.peripherals.touchpad",
+    "org.gnome.desktop.peripherals.pointingstick", "org.gnome.desktop.input-sources",
+    "org.gnome.desktop.peripherals.keyboard", "org.gnome.desktop.a11y", "org.gnome.desktop.a11y.interface",
+    "org.gnome.desktop.a11y.applications", "org.gnome.desktop.a11y.keyboard", "org.gnome.desktop.a11y.mouse",
+    "org.gnome.desktop.a11y.magnifier", "org.gnome.desktop.sound",
+    "org.gnome.desktop.calendar", "org.gnome.desktop.datetime", "org.gtk.Settings.FileChooser", "org.gnome.system.locale",
 )
 CUSTOM = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
 CUSTOM_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom%d/"

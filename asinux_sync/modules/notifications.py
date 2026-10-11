@@ -7,6 +7,14 @@ import gi
 gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
+try:  # newer GLib moved DesktopAppInfo to GioUnix and deprecated the Gio one
+    gi.require_version("GioUnix", "2.0")
+    from gi.repository import GioUnix
+
+    DesktopAppInfo = GioUnix.DesktopAppInfo
+except (ValueError, ImportError):
+    DesktopAppInfo = Gio.DesktopAppInfo
+
 from . import gsettings_util
 from .base import Item
 from .gsettings_module import Group, GSettingsModule
@@ -28,7 +36,7 @@ def _desktop_info(application_id: str):
     if not application_id:
         return None
     try:
-        return Gio.DesktopAppInfo.new(application_id)
+        return DesktopAppInfo.new(application_id)
     except TypeError:
         return None
 

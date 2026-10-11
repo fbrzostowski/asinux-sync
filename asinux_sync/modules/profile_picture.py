@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 from pathlib import Path
 
 import gi
@@ -11,22 +10,13 @@ gi.require_version("Gio", "2.0")
 from gi.repository import Gio, GLib  # noqa: E402
 
 from . import assets
-from .base import ModuleUnavailable, SyncModule
+from .accounts_service import user_proxy as _user_proxy
+from .base import SyncModule
 
 logger = logging.getLogger(__name__)
 
 # accountsservice refuses icons over 1 MB.
 MAX_ICON_BYTES = 1024 * 1024
-
-
-def _user_proxy() -> Gio.DBusProxy:
-    try:
-        return Gio.DBusProxy.new_for_bus_sync(
-            Gio.BusType.SYSTEM, Gio.DBusProxyFlags.NONE, None,
-            "org.freedesktop.Accounts", f"/org/freedesktop/Accounts/User{os.getuid()}",
-            "org.freedesktop.Accounts.User", None)
-    except GLib.Error as exc:
-        raise ModuleUnavailable(f"AccountsService not reachable: {exc.message}") from exc
 
 
 def _current_icon(proxy: Gio.DBusProxy) -> Path | None:

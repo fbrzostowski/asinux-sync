@@ -156,6 +156,12 @@ class SyncEngine:
                 self._save_state(profile, new_items)
             return "pushed" if to_push else "pulled" if to_apply else "idle"
 
+    def cloud_has_item(self, key: str) -> bool:
+        """Does the cloud profile already hold "module.item"?"""
+        with self._locked():
+            remote = self._download()
+            return remote is not None and remote.get("version", 1) >= PROFILE_VERSION and key in _flat(remote["modules"])
+
     def push(self, disabled: Collection[str] = (), *, force: bool = False) -> SyncResult:
         """Upload everything switched on here, whatever the cloud has."""
         disabled = set(disabled)

@@ -324,3 +324,13 @@ def test_only_the_item_that_changed_is_uploaded(tmp_path):
     after = cloud_profile(cloud)
     assert after["modules"]["theme"] == before["modules"]["theme"]
     assert after["revision"] != before["revision"]
+
+
+def test_cloud_has_item(tmp_path):
+    cloud = tmp_path / "cloud"
+    a, store = make_device(tmp_path, "a", cloud)
+    assert a.cloud_has_item("background.a") is False  # nothing in the cloud at all
+    store["background.a"] = "wall"
+    a.sync_once()
+    assert a.cloud_has_item("background.a") is True
+    assert a.cloud_has_item("theme.a") is False

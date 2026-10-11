@@ -69,9 +69,14 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 | `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
 | `extensions` | rozszerzenia GNOME Shell — dla każdego menu: „Extension and prefs” (stan + ustawienia), „Only extension” (tylko stan), „Off” |
 | `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts |
+| `keyboard` | źródła wejścia, przełączanie per okno, klawisz znaków alternatywnych, klawisz Compose, pozostałe opcje układu, powtarzanie klawiszy, wejście Emacs, klawisz przeglądu. Układ wybrany przy zakładaniu profilu jest wartością domyślną: staje się układem pierwszego urządzenia, a na kolejnych urządzeniach uzupełnia chmurę, jeśli nikt jeszcze nie zsynchronizował klawiatury |
 | `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
+| `mouse` | panel Mysz i touchpad: przycisk główny, prędkość i przyspieszenie myszy, kierunek przewijania, wklejanie środkowym przyciskiem; touchpad (włączony, wyłączanie podczas pisania, prędkość, kliknięcie dodatkowe, tapnięcie, metoda i kierunek przewijania) i pointing stick — te dwa tylko na komputerach z takim sprzętem |
 | `default_apps` | `~/.config/mimeapps.list` |
 | `notifications` | panel Powiadomień: Nie przeszkadzać, powiadomienia na ekranie blokady oraz — osobny element dla każdej aplikacji — jej sześć przełączników (powiadomienia, dźwięk, banery, treść banerów, ekran blokady, treść na blokadzie) |
+| `accessibility` | wszystkie wiersze panelu Dostępność: widzenie, słuch, pisanie, wskazywanie i klikanie, powiększenie (25 elementów). Pominięte, bo klucz należy już do innego modułu: rozmiar kursora (Theme, icons and cursor), powtarzanie klawiszy (Keyboard) i aktywacja okna po najechaniu (Window behavior → Focus) |
+| `region` | język i formaty konta (część „Your Account” strony Region & Language; stosowane po następnym logowaniu). Ekran logowania jest systemowy, wymaga administratora i nie jest synchronizowany |
+| `datetime` | format czasu, pierwszy dzień tygodnia, zegar i kalendarz w górnym pasku, automatyczna strefa czasowa. Data, czas sieciowy i strefa czasowa są systemowe (`timedated`, wymagają administratora) i nie są synchronizowane |
 | `power` | wiersze panelu zasilania: przycisk zasilania, procent baterii, przyciemnianie, jasność automatyczna, oszczędzanie baterii, wygaszanie ekranu, usypianie na baterii i przy zasilaniu |
 | `profile_picture` | zdjęcie konta (AccountsService) |
 

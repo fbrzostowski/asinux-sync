@@ -9,6 +9,7 @@ gi.require_version("Adw", "1")
 
 from gi.repository import Adw, GLib, GObject, Gtk
 
+from asinux_sync import account_defaults
 from asinux_sync import config as config_module
 from asinux_sync import daemon as daemon_module
 from asinux_sync import registry as registry_module
@@ -241,6 +242,7 @@ class SyncWindow(Adw.ApplicationWindow):
         device_group.add(self.device_name_row)
         page.add(device_group)
 
+        self._setup_account = existing_account or {}
         is_new = existing_account is None
         if is_new:
             account_group = Adw.PreferencesGroup(
@@ -295,14 +297,28 @@ class SyncWindow(Adw.ApplicationWindow):
                 "keyboard_layout": self.keyboard_row.get_text().strip(),
                 "created_at": registry_module.now_iso(),
             }
+            if account["keyboard_layout"] and not system_defaults.valid_keyboard_layout(account["keyboard_layout"]):
+                self._toast(f"Unknown keyboard layout “{account['keyboard_layout']}” (examples: pl, us, us+dvorak)")
+                return
 
         button.set_sensitive(False)
         self.cfg.device_name = device_name
+
+        existing = self._setup_account
 
         def work():
             if account is not None:
                 self.registry.save_account(account)
             registry_module.register_this_device(self.registry, self.cfg, self.modules)
+            # The keyboard chosen when the profile was created is the default
+            # for the Keyboard category: it becomes this device's layout
+            # (a new profile) or fills in a cloud that has no keyboard yet.
+            account_defaults.apply_keyboard_default(
+                (account or existing).get("keyboard_layout", ""),
+                new_account=account is not None,
+                disabled=self.cfg.disabled_modules,
+                cloud_has_keyboard=lambda: self._engine().cloud_has_item("keyboard.input_sources"),
+            )
             if account is not None:
                 # First device ever: its current state becomes the shared profile.
                 self._engine().push(self.cfg.disabled_modules, force=True)
