@@ -5,6 +5,7 @@ from .default_apps import DefaultAppsModule
 from .dock import DockModule
 from .extensions import ExtensionsModule
 from .layout import LayoutModule
+from .power import PowerModule
 from .profile_picture import ProfilePictureModule
 from .shortcuts import ShortcutsModule
 from .window import WindowModule
@@ -22,6 +23,7 @@ REGISTRY: dict[str, type[SyncModule]] = {
         LayoutModule,
         ShortcutsModule,
         DefaultAppsModule,
+        PowerModule,
         ProfilePictureModule,
     )
 }

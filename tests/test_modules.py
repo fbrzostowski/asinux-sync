@@ -11,7 +11,7 @@ import pytest
 from gi.repository import Gio, GLib
 
 from asinux_sync import registry as registry_module
-from asinux_sync.modules import REGISTRY, background, layout, profile_picture, shell_extensions, shortcuts
+from asinux_sync.modules import REGISTRY, background, extension_prefs, profile_picture, shell_extensions, shortcuts
 from asinux_sync.modules.appearance import AppearanceModule
 from asinux_sync.modules.background import BackgroundModule
 from asinux_sync.modules.base import ModuleUnavailable
@@ -19,6 +19,7 @@ from asinux_sync.modules.default_apps import DefaultAppsModule
 from asinux_sync.modules.dock import DockModule
 from asinux_sync.modules.extensions import ExtensionsModule
 from asinux_sync.modules.layout import LayoutModule
+from asinux_sync.modules.power import PowerModule
 from asinux_sync.modules.profile_picture import ProfilePictureModule
 from asinux_sync.modules.shortcuts import ShortcutsModule
 from asinux_sync.modules.window import WindowModule
@@ -55,14 +56,14 @@ def test_every_module_has_ui_metadata_and_unique_items():
 
 def test_extensions_and_layout_are_separate_modules():
     assert "extensions" in REGISTRY and "layout" in REGISTRY
-    assert not hasattr(layout, "capture_current_layout")
+    assert LayoutModule.module_id != ExtensionsModule.module_id
 
 
 def test_catalog_lists_every_module(monkeypatch):
     monkeypatch.setattr(shell_extensions, "installed", lambda: {"a@x": "A"})
     catalog = registry_module.build_catalog({mid: cls() for mid, cls in REGISTRY.items()})
     assert set(catalog) == set(REGISTRY)
-    assert [i["id"] for i in catalog["extensions"]] == ["a@x"]
+    assert [i["id"] for i in catalog["extensions"]] == ["a@x", "a@x#prefs"]
     assert {i["id"] for i in catalog["appearance"]} >= {"icon_theme", "cursor_theme", "cursor_size"}
 
 
@@ -320,35 +321,8 @@ def test_background_damask_only_where_installed(assets_dir, isolated_home):
 
 # -- extensions and layout (two separate modules) ---------------------------------------------
 
-@pytest.fixture
-def installed_extensions(monkeypatch):
-    names = {"dash@x.org": "Dash", "blur@y.org": "Blur"}
-    monkeypatch.setattr(shell_extensions, "installed", lambda: names)
-    return names
-
-
-def test_extensions_sync_only_on_off(assets_dir, installed_extensions):
-    shell = gs("org.gnome.shell")
-    shell.set_strv("enabled-extensions", ["dash@x.org", "gone@z.org"])
-    module = ExtensionsModule()
-    assert [i.name for i in module.list_items()] == ["Blur", "Dash"]
-
-    captured = module.capture(assets_dir)
-    assert captured["items"] == {"dash@x.org": {"enabled": True}, "blur@y.org": {"enabled": False}}
-
-    shell.set_strv("enabled-extensions", ["blur@y.org", "gone@z.org"])
-    module.apply(captured, assets_dir)
-    assert set(shell.get_strv("enabled-extensions")) == {"dash@x.org", "gone@z.org"}  # unknown one left alone
-
-
-def test_one_extension_can_be_switched_off(assets_dir, installed_extensions):
-    shell = gs("org.gnome.shell")
-    shell.set_strv("enabled-extensions", ["dash@x.org", "blur@y.org"])
-    module = ExtensionsModule()
-    captured = module.capture(assets_dir)
-    shell.set_strv("enabled-extensions", [])
-    module.apply(captured, assets_dir, disabled_items={"blur@y.org"})
-    assert list(shell.get_strv("enabled-extensions")) == ["dash@x.org"]
+DASH = "/org/gnome/shell/extensions/dash/"
+BLUR = "/org/gnome/shell/extensions/blur/"
 
 
 class FakeDconf:
@@ -369,10 +343,94 @@ class FakeDconf:
         raise AssertionError(args)
 
 
-def test_layout_is_one_switch_and_syncs_settings_but_never_enabled_state(assets_dir, installed_extensions, monkeypatch):
-    dash = "/org/gnome/shell/extensions/dash/"
-    dconf = FakeDconf({dash: "[/]\ndock-position='BOTTOM'\n"})
-    monkeypatch.setattr(layout, "_dconf", dconf)
+@pytest.fixture
+def installed_extensions(monkeypatch):
+    names = {"dash@x.org": "Dash", "blur@y.org": "Blur"}
+    monkeypatch.setattr(shell_extensions, "installed", lambda: names)
+    return names
+
+
+@pytest.fixture
+def dconf(monkeypatch):
+    fake = FakeDconf({DASH: "[/]\ndock-position='BOTTOM'\n"})
+    monkeypatch.setattr(extension_prefs, "_dconf", fake)
+    return fake
+
+
+def test_extension_menu_offers_three_choices(installed_extensions):
+    items = ExtensionsModule().list_items()
+    visible = [i for i in items if not i.hidden]
+    assert [i.name for i in visible] == ["Blur", "Dash"]
+    assert [m.label for m in visible[0].modes] == ["Extension and prefs", "Only extension", "Off"]
+    assert [m.off for m in visible[0].modes] == [(), ("blur@y.org#prefs",), ("blur@y.org", "blur@y.org#prefs")]
+    assert {i.id for i in items if i.hidden} == {"blur@y.org#prefs", "dash@x.org#prefs"}
+
+
+def test_extension_choices_reach_the_catalog(installed_extensions):
+    catalog = registry_module.build_catalog({"extensions": ExtensionsModule()})["extensions"]
+    dash = next(e for e in catalog if e["id"] == "dash@x.org")
+    assert dash["modes"][1] == {"label": "Only extension", "off": ["dash@x.org#prefs"]}
+    assert next(e for e in catalog if e["id"] == "dash@x.org#prefs")["hidden"] is True
+
+
+def test_extension_and_prefs(assets_dir, installed_extensions, dconf):
+    shell = gs("org.gnome.shell")
+    shell.set_strv("enabled-extensions", ["dash@x.org", "gone@z.org"])
+    module = ExtensionsModule()
+
+    captured = module.capture(assets_dir)
+    assert captured["items"] == {
+        "dash@x.org": {"enabled": True},
+        "dash@x.org#prefs": {"settings": "[/]\ndock-position='BOTTOM'\n"},
+        "blur@y.org": {"enabled": False},
+    }
+
+    shell.set_strv("enabled-extensions", ["blur@y.org", "gone@z.org"])
+    dconf.folders[DASH] = "[/]\ndock-position='LEFT'\n"
+    module.apply(captured, assets_dir)
+    assert set(shell.get_strv("enabled-extensions")) == {"dash@x.org", "gone@z.org"}  # unknown one left alone
+    assert dconf.folders[DASH] == "[/]\ndock-position='BOTTOM'\n"
+
+
+def test_only_extension_leaves_its_preferences_alone(assets_dir, installed_extensions, dconf):
+    shell = gs("org.gnome.shell")
+    shell.set_strv("enabled-extensions", ["dash@x.org"])
+    module = ExtensionsModule()
+    captured = module.capture(assets_dir)
+
+    shell.set_strv("enabled-extensions", [])
+    dconf.folders[DASH] = "[/]\ndock-position='LEFT'\n"
+    module.apply(captured, assets_dir, disabled_items={"dash@x.org#prefs"})  # the "Only extension" choice
+    assert list(shell.get_strv("enabled-extensions")) == ["dash@x.org"]
+    assert "LEFT" in dconf.folders[DASH]
+    assert "dash@x.org#prefs" not in module.capture(assets_dir, disabled_items={"dash@x.org#prefs"})["items"]
+
+
+def test_off_leaves_the_extension_completely_alone(assets_dir, installed_extensions, dconf):
+    shell = gs("org.gnome.shell")
+    shell.set_strv("enabled-extensions", ["dash@x.org"])
+    module = ExtensionsModule()
+    captured = module.capture(assets_dir)
+
+    shell.set_strv("enabled-extensions", [])
+    dconf.folders[DASH] = "[/]\ndock-position='LEFT'\n"
+    module.apply(captured, assets_dir, disabled_items={"dash@x.org", "dash@x.org#prefs"})  # the "Off" choice
+    assert list(shell.get_strv("enabled-extensions")) == []
+    assert "LEFT" in dconf.folders[DASH]
+
+
+def test_extension_on_off_still_syncs_without_dconf(assets_dir, installed_extensions, monkeypatch):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError
+
+    monkeypatch.setattr(extension_prefs.subprocess, "run", missing)
+    gs("org.gnome.shell").set_strv("enabled-extensions", ["dash@x.org"])
+    captured = ExtensionsModule().capture(assets_dir)
+    assert captured["items"]["dash@x.org"] == {"enabled": True}
+    assert "dash@x.org#prefs" not in captured["items"]
+
+
+def test_layout_is_one_switch_and_syncs_settings_but_never_enabled_state(assets_dir, installed_extensions, dconf):
     shell = gs("org.gnome.shell")
     shell.set_strv("enabled-extensions", ["dash@x.org"])
     module = LayoutModule()
@@ -381,9 +439,9 @@ def test_layout_is_one_switch_and_syncs_settings_but_never_enabled_state(assets_
     captured = module.capture(assets_dir)
     assert captured["items"]["all"] == {"settings": {"dash@x.org": "[/]\ndock-position='BOTTOM'\n"}}  # Blur has none
 
-    dconf.folders[dash] = "[/]\ndock-position='LEFT'\n"
+    dconf.folders[DASH] = "[/]\ndock-position='LEFT'\n"
     module.apply(captured, assets_dir)
-    assert dconf.folders[dash] == "[/]\ndock-position='BOTTOM'\n"
+    assert dconf.folders[DASH] == "[/]\ndock-position='BOTTOM'\n"
     assert list(shell.get_strv("enabled-extensions")) == ["dash@x.org"]  # on/off untouched
 
     dconf.log.clear()
@@ -392,8 +450,7 @@ def test_layout_is_one_switch_and_syncs_settings_but_never_enabled_state(assets_
 
 
 def test_layout_keeps_settings_of_extensions_missing_here():
-    module = LayoutModule()
-    merged = module.merge_item(
+    merged = LayoutModule().merge_item(
         "all",
         {"settings": {"only-there@x": "[/]\na=1\n", "dash@x.org": "old"}},
         {"settings": {"dash@x.org": "new"}},
@@ -401,20 +458,63 @@ def test_layout_keeps_settings_of_extensions_missing_here():
     assert merged == {"settings": {"only-there@x": "[/]\na=1\n", "dash@x.org": "new"}}
 
 
-def test_layout_skips_settings_for_extensions_not_installed_here(assets_dir, installed_extensions, monkeypatch):
-    dconf = FakeDconf({})
-    monkeypatch.setattr(layout, "_dconf", dconf)
+def test_layout_skips_settings_for_extensions_not_installed_here(assets_dir, installed_extensions, dconf):
     LayoutModule().apply({"items": {"all": {"settings": {"missing@x": "[/]\na=1\n"}}}}, assets_dir)
-    assert dconf.folders == {}
+    assert "/org/gnome/shell/extensions/missing/" not in dconf.folders
 
 
 def test_layout_unavailable_without_dconf(assets_dir, installed_extensions, monkeypatch):
     def missing(*args, **kwargs):
         raise FileNotFoundError
 
-    monkeypatch.setattr(layout.subprocess, "run", missing)
+    monkeypatch.setattr(extension_prefs.subprocess, "run", missing)
     with pytest.raises(ModuleUnavailable):
         LayoutModule().capture(assets_dir)
+
+
+# -- power --------------------------------------------------------------------------------------
+
+POWER = "org.gnome.settings-daemon.plugins.power"
+
+
+def test_power_items_mirror_the_control_center_rows():
+    assert [i.id for i in PowerModule().list_items()] == [
+        "power_button", "battery_percentage", "dim_screen", "auto_brightness",
+        "auto_power_saver", "screen_blank", "suspend_battery", "suspend_plugged"]
+
+
+def test_power_roundtrip_and_items_are_independent(assets_dir):
+    power, session, interface = gs(POWER), gs("org.gnome.desktop.session"), gs("org.gnome.desktop.interface")
+    power.set_string("power-button-action", "hibernate")
+    power.set_string("sleep-inactive-battery-type", "suspend")
+    power.set_int("sleep-inactive-battery-timeout", 600)
+    power.set_string("sleep-inactive-ac-type", "nothing")
+    session.set_uint("idle-delay", 300)
+    interface.set_boolean("show-battery-percentage", True)
+
+    def mutate():
+        power.set_string("power-button-action", "nothing")
+        power.set_int("sleep-inactive-battery-timeout", 1800)
+        session.set_uint("idle-delay", 0)
+        interface.set_boolean("show-battery-percentage", False)
+
+    roundtrip(PowerModule(), assets_dir, mutate)
+    assert power.get_string("power-button-action") == "hibernate"
+    assert power.get_int("sleep-inactive-battery-timeout") == 600
+    assert session.get_uint("idle-delay") == 300
+    assert interface.get_boolean("show-battery-percentage") is True
+
+    captured = PowerModule().capture(assets_dir)
+    power.set_int("sleep-inactive-battery-timeout", 1800)
+    power.set_string("power-button-action", "nothing")
+    PowerModule().apply(captured, assets_dir, disabled_items={"suspend_battery"})
+    assert power.get_int("sleep-inactive-battery-timeout") == 1800  # that row is switched off here
+    assert power.get_string("power-button-action") == "hibernate"
+
+
+def test_layout_and_power_start_switched_off():
+    assert LayoutModule.default_enabled is False and PowerModule.default_enabled is False
+    assert all(cls.default_enabled for mid, cls in REGISTRY.items() if mid not in ("layout", "power"))
 
 
 # -- profile picture ----------------------------------------------------------------------------

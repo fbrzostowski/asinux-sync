@@ -527,7 +527,8 @@ class SyncWindow(Adw.ApplicationWindow):
         self.nav.push(_page(device.get("name", "Device"), page))
 
     def _module_row(self, device_id, module_id, module, items, disabled, is_me):
-        if len(items) <= 1:
+        items = [item for item in items if not item.get("hidden")]
+        if len(items) <= 1 and not any(item.get("modes") for item in items):
             row = Adw.SwitchRow(
                 title=module.display_name, subtitle=module.description,
                 active=module_id not in disabled, use_markup=False)
@@ -539,6 +540,9 @@ class SyncWindow(Adw.ApplicationWindow):
             show_enable_switch=True, enable_expansion=module_id not in disabled)
         row.connect("notify::enable-expansion", self._on_module_toggled, device_id, module_id, is_me)
         for item in items:
+            if item.get("modes"):
+                row.add_row(self._mode_row(device_id, module_id, item, disabled, is_me))
+                continue
             key = f"{module_id}.{item['id']}"
             item_row = Adw.SwitchRow(
                 title=item["name"], subtitle=item.get("description", ""),
@@ -547,14 +551,38 @@ class SyncWindow(Adw.ApplicationWindow):
             row.add_row(item_row)
         return row
 
+    def _mode_row(self, device_id, module_id, item, disabled, is_me):
+        """A menu instead of a switch: each choice switches off a set of items."""
+        modes = item["modes"]
+        union = {off for mode in modes for off in mode["off"]}
+        off_now = {off for off in union if f"{module_id}.{off}" in disabled}
+        # The choice matching what is off now; failing that the strongest one contained in it.
+        selected = next((i for i, m in enumerate(modes) if set(m["off"]) == off_now), None)
+        if selected is None:
+            fitting = [i for i, m in enumerate(modes) if set(m["off"]) <= off_now]
+            selected = max(fitting, key=lambda i: len(modes[i]["off"]), default=0)
+
+        row = Adw.ComboRow(title=item["name"], subtitle=item.get("description", ""), use_markup=False)
+        row.set_model(Gtk.StringList.new([mode["label"] for mode in modes]))
+        row.set_selected(selected)
+        row.connect("notify::selected", self._on_mode_selected, device_id, module_id, modes, is_me)
+        return row
+
+    def _on_mode_selected(self, row, _pspec, device_id, module_id, modes, is_me):
+        chosen = set(modes[row.get_selected()]["off"])
+        changes = {f"{module_id}.{off}": off not in chosen for mode in modes for off in mode["off"]}
+        self._save_switches(device_id, changes, is_me)
+
     def _on_module_toggled(self, row, _pspec, device_id, key, is_me):
         # `key` is "<module>" for a whole category, "<module>.<item>" for one part.
         enabled = row.get_enable_expansion() if isinstance(row, Adw.ExpanderRow) else row.get_active()
+        self._save_switches(device_id, {key: enabled}, is_me)
 
+    def _save_switches(self, device_id, changes, is_me):
         def work():
             # Read-modify-write of one cloud file: quick successive clicks must queue up.
             with self._toggle_lock:
-                return self.registry.set_device_module(device_id, key, enabled)
+                return self.registry.set_device_keys(device_id, changes)
 
         def done(device, error):
             if error:

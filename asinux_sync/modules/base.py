@@ -30,10 +30,23 @@ class ModuleUnavailable(Exception):
 
 
 @dataclass(frozen=True)
+class Mode:
+    """One choice in an item's menu: which items it switches off."""
+
+    label: str
+    off: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Item:
     id: str
     name: str
     description: str = ""
+    # If set, the panel shows a menu of these choices instead of a switch.
+    # The choices switch off (possibly other, hidden) items of the module.
+    modes: tuple[Mode, ...] = ()
+    # Controlled through another item's menu, so not listed on its own.
+    hidden: bool = False
 
 
 class SyncModule(ABC):
@@ -41,6 +54,8 @@ class SyncModule(ABC):
     display_name: str = ""
     description: str = ""
     category: str = "Other"
+    # False: a device starts with this module switched off and has to opt in.
+    default_enabled: bool = True
 
     def list_items(self) -> list[Item]:
         """What can be switched off separately. May depend on the machine

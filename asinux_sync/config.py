@@ -26,6 +26,9 @@ class Config:
     # Switch-off list: "<module>" for a whole module, "<module>.<item>" for one
     # item of it. A cache of this device's entry in the cloud registry.
     disabled_modules: list[str] = field(default_factory=list)
+    # Modules that start switched off whose default has been applied to this
+    # device already, so turning one on later isn't undone.
+    defaults_applied: list[str] = field(default_factory=list)
     background_sync: bool = True
     sync_interval_seconds: int = 60
 

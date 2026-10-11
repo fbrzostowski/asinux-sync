@@ -65,14 +65,28 @@ class Registry:
 
     def set_device_module(self, device_id: str, key: str, enabled: bool) -> dict:
         """Switch a module ("background") or one item of it ("appearance.icon_theme") on or off."""
+        return self.set_device_keys(device_id, {key: enabled})
+
+    def set_device_keys(self, device_id: str, changes: dict[str, bool]) -> dict:
+        """Apply several on (True) / off (False) switches in one write."""
         device = self.get_device(device_id)
         if device is None:
             raise RcloneError("device is no longer registered")
         disabled = set(device.get("disabled_modules", []))
-        (disabled.discard if enabled else disabled.add)(key)
+        for key, enabled in changes.items():
+            (disabled.discard if enabled else disabled.add)(key)
         device["disabled_modules"] = sorted(disabled)
         self.save_device(device)
         return device
+
+
+def _catalog_entry(item) -> dict:
+    entry = {"id": item.id, "name": item.name, "description": item.description}
+    if item.hidden:
+        entry["hidden"] = True
+    if item.modes:
+        entry["modes"] = [{"label": m.label, "off": list(m.off)} for m in item.modes]
+    return entry
 
 
 def build_catalog(modules: dict) -> dict:
@@ -86,8 +100,23 @@ def build_catalog(modules: dict) -> dict:
             items = module.list_items()
         except Exception:  # a broken module must not stop the heartbeat
             continue
-        catalog[module_id] = [{"id": i.id, "name": i.name, "description": i.description} for i in items]
+        catalog[module_id] = [_catalog_entry(i) for i in items]
     return catalog
+
+
+def _apply_off_by_default(cfg: config_module.Config, modules: dict) -> None:
+    """Switch off, once per device, the modules that are opt-in.
+
+    Done once (not on every heartbeat) so that a module the user later turns
+    on stays on - and so devices registered before a module became opt-in
+    get it switched off too.
+    """
+    for module_id, module in modules.items():
+        if getattr(module, "default_enabled", True) or module_id in cfg.defaults_applied:
+            continue
+        if module_id not in cfg.disabled_modules:
+            cfg.disabled_modules = sorted([*cfg.disabled_modules, module_id])
+        cfg.defaults_applied = sorted([*cfg.defaults_applied, module_id])
 
 
 def register_this_device(registry: Registry, cfg: config_module.Config, modules: dict | None = None) -> None:
@@ -102,12 +131,16 @@ def register_this_device(registry: Registry, cfg: config_module.Config, modules:
     existing = registry.get_device(cfg.device_id)
     if existing is not None:
         cfg.disabled_modules = list(existing.get("disabled_modules", []))
+        cfg.defaults_applied = list(existing.get("defaults_applied", cfg.defaults_applied))
+    if modules is not None:
+        _apply_off_by_default(cfg, modules)
     registry.save_device(
         {
             "id": cfg.device_id,
             "name": cfg.device_name,
             "hostname": socket.gethostname(),
             "disabled_modules": cfg.disabled_modules,
+            "defaults_applied": cfg.defaults_applied,
             "catalog": build_catalog(modules) if modules is not None else (existing or {}).get("catalog", {}),
             "last_seen": now_iso(),
         }

@@ -66,11 +66,15 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 | `appearance` | motyw aplikacji (GTK), ikony, motyw kursora, rozmiar kursora, jasny/ciemny, kolor akcentu, motyw shella; motywy zainstalowane przez użytkownika jadą jako archiwa |
 | `window` | przyciski paska tytułu, kliknięcia paska tytułu, focus, klawisz modyfikatora okien, nowe okna |
 | `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
-| `extensions` | włączone/wyłączone rozszerzenia GNOME Shell — jeden element na zainstalowane rozszerzenie |
+| `extensions` | rozszerzenia GNOME Shell — dla każdego menu: „Extension and prefs” (stan + ustawienia), „Only extension” (tylko stan), „Off” |
 | `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts |
 | `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
 | `default_apps` | `~/.config/mimeapps.list` |
+| `power` | wiersze panelu zasilania: przycisk zasilania, procent baterii, przyciemnianie, jasność automatyczna, oszczędzanie baterii, wygaszanie ekranu, usypianie na baterii i przy zasilaniu |
 | `profile_picture` | zdjęcie konta (AccountsService) |
+
+`layout` i `power` są domyślnie wyłączone (opt-in): każde urządzenie dostaje je wyłączone raz,
+przy pierwszej rejestracji po wprowadzeniu tej zasady, a ręczne włączenie później nie jest cofane.
 
 Przełączniki są zapisane w lokalnej liście urządzenia jako `<moduł>` (cała kategoria) lub
 `<moduł>.<element>`. Profil w chmurze jest podzielony na elementy (`{"items": {...}}`), więc

@@ -36,7 +36,7 @@ SCHEMAS = (
     "org.gnome.desktop.background", "org.gnome.desktop.screensaver", "org.gnome.shell.extensions.user-theme",
     "io.github.jeffshee.hanabi-extension", "org.gnome.desktop.wm.keybindings", "org.gnome.shell.keybindings",
     "org.gnome.mutter.keybindings", "org.gnome.mutter.wayland.keybindings",
-    "org.gnome.settings-daemon.plugins.media-keys",
+    "org.gnome.settings-daemon.plugins.media-keys", "org.gnome.settings-daemon.plugins.power", "org.gnome.desktop.session",
 )
 CUSTOM = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
 CUSTOM_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom%d/"

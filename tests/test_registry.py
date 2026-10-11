@@ -71,3 +71,46 @@ def test_device_publishes_its_catalog(tmp_path, monkeypatch):
 
     registry_module.register_this_device(reg, cfg)  # a heartbeat without modules keeps the last catalog
     assert reg.get_device(cfg.device_id)["catalog"] == catalog
+
+
+def test_several_switches_can_be_saved_in_one_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.json")
+    reg = registry_module.Registry(FakeBackend())
+    cfg = config_module.Config(device_name="Desktop")
+    registry_module.register_this_device(reg, cfg)
+    reg.set_device_keys(cfg.device_id, {"extensions.a": False, "extensions.a#prefs": False, "extensions.b": True})
+    assert reg.get_device(cfg.device_id)["disabled_modules"] == ["extensions.a", "extensions.a#prefs"]
+
+
+def test_opt_in_modules_start_off_once_per_device(tmp_path, monkeypatch):
+    class Mod:
+        def __init__(self, default_enabled):
+            self.default_enabled = default_enabled
+
+        def list_items(self):
+            return []
+
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.json")
+    modules = {"background": Mod(True), "layout": Mod(False), "power": Mod(False)}
+    reg = registry_module.Registry(FakeBackend())
+
+    # A device registered before these modules were opt-in picks the default up once...
+    cfg = config_module.Config(device_name="Desktop")
+    registry_module.register_this_device(reg, cfg)
+    assert cfg.disabled_modules == []
+    registry_module.register_this_device(reg, cfg, modules)
+    assert cfg.disabled_modules == ["layout", "power"]
+    assert reg.get_device(cfg.device_id)["defaults_applied"] == ["layout", "power"]
+
+    # ...and turning one on afterwards (from any device) sticks across heartbeats.
+    reg.set_device_module(cfg.device_id, "power", True)
+    registry_module.register_this_device(reg, cfg, modules)
+    registry_module.register_this_device(reg, cfg, modules)
+    assert cfg.disabled_modules == ["layout"]
+
+    # A brand-new device starts with them off from its very first registration.
+    fresh = config_module.Config(device_name="Laptop")
+    registry_module.register_this_device(reg, fresh, modules)
+    assert fresh.disabled_modules == ["layout", "power"]
