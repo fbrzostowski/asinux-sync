@@ -14,6 +14,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import socket
 import uuid
 from contextlib import contextmanager
@@ -22,7 +23,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .cloud.rclone import RcloneBackend
-from .modules.base import SyncModule
+from .modules.base import ModuleUnavailable, SyncModule
+
+logger = logging.getLogger(__name__)
 
 PROFILE_FILENAME = "profile.json"
 STATE_FILENAME = "state.json"
@@ -151,18 +154,42 @@ class SyncEngine:
         return json.loads(profile_path.read_text())
 
     def _capture(self, module_ids: list[str]) -> dict:
+        """Capture each module, leaving out any that can't be captured here.
+
+        A module missing from the result is simply not touched in the cloud
+        profile (see _upload), so one broken or unavailable module never
+        blocks - or wipes - the rest."""
         self.assets_dir.mkdir(parents=True, exist_ok=True)
-        return {mid: self.modules[mid].capture(self.assets_dir) for mid in module_ids if mid in self.modules}
+        captured = {}
+        for module_id in module_ids:
+            module = self.modules.get(module_id)
+            if module is None:
+                continue
+            try:
+                captured[module_id] = module.capture(self.assets_dir)
+            except ModuleUnavailable as exc:
+                logger.info("%s unavailable here: %s", module_id, exc)
+            except Exception:
+                logger.exception("capturing %s failed, skipping it", module_id)
+        return captured
 
     def _apply(self, profile: dict, enabled_module_ids: list[str] | None) -> list[str]:
         applied = []
-        for module_id, data in profile.get("modules", {}).items():
+        profile_modules = profile.get("modules", {})
+        # Our own registry order, not the profile's: it is the intended apply order.
+        for module_id, module in self.modules.items():
+            if module_id not in profile_modules:
+                continue  # unknown to the profile (older client / newer module)
             if enabled_module_ids is not None and module_id not in enabled_module_ids:
                 continue  # disabled on this device - leave local state alone
-            module = self.modules.get(module_id)
-            if module is None:
-                continue  # unknown module (older client / newer profile) - skip, don't fail
-            module.apply(data, self.assets_dir)
+            try:
+                module.apply(profile_modules[module_id], self.assets_dir)
+            except ModuleUnavailable as exc:
+                logger.info("%s unavailable here: %s", module_id, exc)
+                continue
+            except Exception:
+                logger.exception("applying %s failed, skipping it", module_id)
+                continue
             applied.append(module_id)
         return applied
 

@@ -480,15 +480,20 @@ class SyncWindow(Adw.ApplicationWindow):
                 description="Changes are saved to your cloud and take effect the next time "
                             "that device syncs.")
         disabled = set(device.get("disabled_modules", []))
+        page.add(group)
+        groups = {}
         for module_id, module in self.modules.items():
+            if module.category not in groups:
+                groups[module.category] = Adw.PreferencesGroup(title=module.category)
+                page.add(groups[module.category])
             row = Adw.SwitchRow(
                 title=module.display_name or module_id,
                 subtitle=module.description,
                 active=module_id not in disabled,
+                use_markup=False,
             )
             row.connect("notify::active", self._on_module_toggled, device["id"], module_id, is_me)
-            group.add(row)
-        page.add(group)
+            groups[module.category].add(row)
         self.nav.push(_page(device.get("name", "Device"), page))
 
     def _on_module_toggled(self, row, _pspec, device_id, module_id, is_me):

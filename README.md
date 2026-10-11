@@ -55,6 +55,30 @@ ustawienia żyją w dconf i katalogu domowym użytkownika). Panel instaluje ją 
 w panelu i jest lokalny dla urządzenia. Cykl: lokalna zmiana → upload, zmiana z chmury →
 zastosowanie; gdy zmieniły się obie strony, wygrywa to urządzenie.
 
+## Co się synchronizuje
+
+Każda kategoria to moduł (`asinux_sync/modules/`) z jawną listą kluczy — nie zrzut całego dconf.
+W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
+
+| Moduł | Zawartość |
+|---|---|
+| `background` | tapeta pulpitu/blokady, własne dynamiczne tapety (XML razem z obrazami), Hanabi (ustawienia + wideo), Damask |
+| `appearance` | motyw GTK/shell/ikon/kursora, schemat kolorów, akcent; motywy zainstalowane przez użytkownika jadą jako archiwa |
+| `window` | przyciski i akcje paska tytułu, focus, pozycja nowych okien |
+| `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
+| `layout` | włączone rozszerzenia GNOME Shell + ich ustawienia (przez `/opt/asinux-layouts`) |
+| `shortcuts` | skróty systemowe i własne |
+| `default_apps` | `~/.config/mimeapps.list` |
+| `profile_picture` | zdjęcie konta (AccountsService) |
+
+Zsynchronizowane są tylko wartości ustawione przez użytkownika; klucz zostawiony domyślnie na
+jednym urządzeniu jest resetowany na pozostałych. Nazwa użytkownika nie jest modułem — powstaje
+raz, przy pierwszej konfiguracji (`account.json`). Nie synchronizujemy ustawień specyficznych
+dla sprzętu (monitory, hasła Wi-Fi, opcje GPU Hanabi). Rozszerzenia GNOME Shell, których
+brakuje na danym komputerze, nie są instalowane automatycznie — są pomijane.
+
+Testy modułów używają backendu pamięciowego GSettings, więc nigdy nie zmieniają prawdziwych ustawień.
+
 ## Układ danych w chmurze
 
 ```
@@ -83,3 +107,7 @@ python3 -m pytest tests/ -q
 
 Testy modułów używają fałszywego `Gio.Settings` w pamięci — nigdy nie
 dotykają prawdziwego dconf uruchamiającej je maszyny.
+
+## Licencja
+
+MIT — zobacz plik [LICENSE](LICENSE).

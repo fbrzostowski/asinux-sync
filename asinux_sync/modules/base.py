@@ -13,10 +13,17 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 
+class ModuleUnavailable(Exception):
+    """This machine can't handle the module (a dependency is missing).
+    The engine leaves the module out of capture and apply instead of failing,
+    so the cloud's copy of it is kept as is and the rest of the sync goes on."""
+
+
 class SyncModule(ABC):
     module_id: str
     display_name: str = ""
     description: str = ""
+    category: str = "Other"
 
     @abstractmethod
     def capture(self, assets_dir: Path) -> dict:

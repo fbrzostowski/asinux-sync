@@ -1,3 +1,4 @@
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -107,3 +108,57 @@ def test_disabled_module_is_not_applied_and_survives_pushes(tmp_path):
     profile_modules = __import__("json").loads((cloud / "asinux-sync/profile/profile.json").read_text())["modules"]
     assert profile_modules["background"] == {"value": "wall1"}
     assert a_store_before["background"] == "wall1"
+
+
+class BrokenModule(SyncModule):
+    def __init__(self, module_id, error):
+        self.module_id = module_id
+        self.error = error
+
+    def capture(self, assets_dir):
+        raise self.error
+
+    def apply(self, data, assets_dir):
+        raise self.error
+
+
+def test_failing_modules_are_skipped_and_do_not_wipe_the_cloud_copy(tmp_path):
+    from asinux_sync.modules.base import ModuleUnavailable
+
+    cloud = tmp_path / "cloud"
+    healthy, store = make_device(tmp_path, "a", cloud)
+    store.update(background="wall1", theme="dark")
+    healthy.sync_once(ALL)
+
+    broken = SyncEngine(
+        DirBackend(cloud),
+        {
+            "background": FakeModule("background", {}),
+            "theme": BrokenModule("theme", RuntimeError("boom")),
+            "layout": BrokenModule("layout", ModuleUnavailable("not installed")),
+        },
+        tmp_path / "b",
+    )
+    assert broken.sync_once(["background", "theme", "layout"]) == "pulled"  # fresh device: no crash
+    broken.modules["background"].store["background"] = "mine"
+    assert broken.sync_once(["background", "theme", "layout"]) == "pushed"
+
+    modules = json.loads((cloud / "asinux-sync/profile/profile.json").read_text())["modules"]
+    assert modules["theme"] == {"value": "dark"}  # the broken module did not erase it
+    assert modules["background"] == {"value": "mine"}
+
+
+def test_modules_apply_in_registry_order(tmp_path):
+    order = []
+
+    class Recorder(FakeModule):
+        def apply(self, data, assets_dir):
+            order.append(self.module_id)
+
+    cloud = tmp_path / "cloud"
+    a, store = make_device(tmp_path, "a", cloud)
+    store.update(background="x", theme="y")
+    a.sync_once(ALL)
+    b = SyncEngine(DirBackend(cloud), {"theme": Recorder("theme", {}), "background": Recorder("background", {})}, tmp_path / "b")
+    b.sync_once(["theme", "background"])
+    assert order == ["theme", "background"]  # the engine's module order, not the profile's
