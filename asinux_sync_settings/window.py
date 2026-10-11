@@ -10,10 +10,12 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk
 
 from asinux_sync import config as config_module
+from asinux_sync import daemon as daemon_module
 from asinux_sync import registry as registry_module
+from asinux_sync import service as service_module
 from asinux_sync import system_defaults
 from asinux_sync.cloud.rclone import RcloneBackend, RcloneError, is_installed
-from asinux_sync.engine import ConflictError, SyncEngine
+from asinux_sync.engine import SyncEngine
 from asinux_sync.modules import REGISTRY
 
 PROVIDER = "onedrive"
@@ -52,6 +54,25 @@ def _format_time(iso):
         return "never"
 
 
+_RESULT_TEXT = {
+    "idle": "up to date",
+    "pushed": "uploaded this device's changes",
+    "pulled": "applied changes from the cloud",
+    "not-configured": "not set up yet",
+}
+
+
+def _service_summary(active, status):
+    if not active:
+        return "Not running"
+    if not status:
+        return "Running - waiting for the first sync"
+    when = _format_time(status.get("last_run"))
+    if status.get("result") == "error":
+        return f"Last attempt {when} failed: {status.get('error', 'unknown error')}"
+    return f"Last sync {when} - {_RESULT_TEXT.get(status.get('result'), status.get('result', ''))}"
+
+
 class SyncWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app)
@@ -67,18 +88,32 @@ class SyncWindow(Adw.ApplicationWindow):
         self.toast_overlay.set_child(self.nav)
         self.set_content(self.toast_overlay)
 
+        self.auth_process = None
+        self.connect("close-request", self._on_close_request)
+
         self._start()
+
+    def _on_close_request(self, _window):
+        # Don't leave `rclone authorize` running: it keeps port 53682 bound
+        # and blocks every later sign-in attempt.
+        if self.auth_process is not None and self.auth_process.poll() is None:
+            self.auth_process.kill()
+        return False
 
     # -- helpers ----------------------------------------------------------
 
     def _toast(self, message):
-        self.toast_overlay.add_toast(Adw.Toast.new(message))
+        toast = Adw.Toast.new(message)
+        # Messages carry raw error text (URLs with &, rclone output with <>);
+        # parsed as Pango markup they would render as an empty toast.
+        toast.set_use_markup(False)
+        self.toast_overlay.add_toast(toast)
 
     def _run_async(self, work, on_done):
         def runner():
             try:
                 result, error = work(), None
-            except (RcloneError, ConflictError, ValueError) as exc:
+            except (RcloneError, service_module.ServiceError, OSError, ValueError) as exc:
                 result, error = None, exc
             GLib.idle_add(on_done, result, error)
 
@@ -99,6 +134,8 @@ class SyncWindow(Adw.ApplicationWindow):
                 "Asinux Sync needs rclone to talk to your cloud account.")))
         elif not RcloneBackend.exists(self.cfg.remote_name):
             self._show_login()
+        elif not RcloneBackend.is_configured(self.cfg.remote_name):
+            self._finish_signin()
         elif not self.cfg.device_id:
             self._show_setup()
         else:
@@ -122,7 +159,7 @@ class SyncWindow(Adw.ApplicationWindow):
             GLib.idle_add(self._show_auth_url, url)
 
         def work():
-            result = RcloneBackend.authorize(PROVIDER, on_auth_url)
+            result = RcloneBackend.authorize(PROVIDER, on_auth_url, on_process=self._set_auth_process)
             RcloneBackend.config_create(self.cfg.remote_name, PROVIDER, result.token_json)
 
         def done(_result, error):
@@ -137,6 +174,9 @@ class SyncWindow(Adw.ApplicationWindow):
 
         self._run_async(work, done)
 
+    def _set_auth_process(self, proc):
+        self.auth_process = proc
+
     def _show_auth_url(self, url):
         dialog = Adw.AlertDialog(
             heading="Sign in to OneDrive",
@@ -145,6 +185,22 @@ class SyncWindow(Adw.ApplicationWindow):
         dialog.add_response("close", "Close")
         dialog.present(self)
         return GLib.SOURCE_REMOVE
+
+    def _finish_signin(self):
+        """Signed in earlier but the remote never got its drive details."""
+        spinner = Gtk.Spinner(spinning=True, halign=Gtk.Align.CENTER, width_request=32, height_request=32)
+        self._set_root(_page("Asinux Sync", _status_page(
+            "emblem-synchronizing-symbolic", "Finishing sign-in…", "", spinner)))
+
+        def done(_result, error):
+            if error:
+                self._toast(f"Couldn't finish sign-in: {error}")
+                self._show_login()
+            else:
+                self._start()
+            return GLib.SOURCE_REMOVE
+
+        self._run_async(lambda: RcloneBackend.repair(self.cfg.remote_name), done)
 
     # -- login view: device name, account, locale ---------------------------
 
@@ -272,25 +328,101 @@ class SyncWindow(Adw.ApplicationWindow):
         page.add(self.devices_group)
         self.device_rows = []
 
-        sync_group = Adw.PreferencesGroup(title="Synchronization")
-        self.push_button = self._action_row(sync_group, "Upload this device's settings", "Upload", self._on_push)
-        self.pull_button = self._action_row(sync_group, "Apply settings from the cloud", "Download", self._on_pull)
-        page.add(sync_group)
+        page.add(self._build_background_group())
 
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         refresh.connect("clicked", lambda _b: self._reload_main())
         self._set_root(_page("Asinux Sync", page, header_end=[refresh]))
-        self._reload_main(background_sync=True)
+        self._reload_main()
+        self._ensure_service()
 
-    def _action_row(self, group, title, label, handler):
-        row = Adw.ActionRow(title=title)
-        button = Gtk.Button(label=label, valign=Gtk.Align.CENTER)
-        button.connect("clicked", handler)
-        row.add_suffix(button)
-        group.add(row)
-        return button
+    # -- main view: background service ----------------------------------------
 
-    def _reload_main(self, background_sync=False):
+    def _build_background_group(self):
+        group = Adw.PreferencesGroup(
+            title="Background sync",
+            description="A background service keeps this device and your cloud up to date. "
+                        "The settings below apply to this device only.")
+        self._updating_service_ui = True
+        self.service_row = Adw.SwitchRow(title="Sync in the background", subtitle="Checking…", use_markup=False)
+        self.service_row.set_active(self.cfg.background_sync)
+        self.service_row.connect("notify::active", self._on_service_toggled)
+        group.add(self.service_row)
+
+        adjustment = Gtk.Adjustment(
+            value=max(1, round(self.cfg.sync_interval_seconds / 60)),
+            lower=1, upper=1440, step_increment=1, page_increment=10)
+        self.interval_row = Adw.SpinRow(
+            title="Sync interval", subtitle="Minutes between syncs", adjustment=adjustment)
+        self.interval_row.connect("notify::value", self._on_interval_changed)
+        group.add(self.interval_row)
+        self._updating_service_ui = False
+        return group
+
+    def _on_interval_changed(self, row, _pspec):
+        if self._updating_service_ui:
+            return
+        # The service notices the config change on its own and re-times itself.
+        self.cfg.sync_interval_seconds = max(
+            config_module.MIN_INTERVAL_SECONDS, int(row.get_value()) * 60)
+        config_module.save(self.cfg)
+
+    def _on_service_toggled(self, row, _pspec):
+        if self._updating_service_ui:
+            return
+        enable = row.get_active()
+        self.cfg.background_sync = enable
+        config_module.save(self.cfg)
+
+        def done(_result, error):
+            if error:
+                self._toast(f"Couldn't {'start' if enable else 'stop'} the service: {error}")
+                self._updating_service_ui = True
+                row.set_active(not enable)
+                self.cfg.background_sync = not enable
+                config_module.save(self.cfg)
+                self._updating_service_ui = False
+            self._refresh_service_status()
+            return GLib.SOURCE_REMOVE
+
+        self._run_async(service_module.enable if enable else service_module.disable, done)
+
+    def _ensure_service(self):
+        """Install/start the service on launch if this device wants it."""
+        if not self.cfg.background_sync:
+            self._refresh_service_status()
+            return
+
+        def work():
+            service_module.install_unit()
+            if not (service_module.is_enabled() and service_module.is_active()):
+                service_module.enable()
+
+        def done(_result, error):
+            if error:
+                self._toast(f"Couldn't start the background service: {error}")
+            self._refresh_service_status()
+            return GLib.SOURCE_REMOVE
+
+        self._run_async(work, done)
+
+    def _refresh_service_status(self):
+        def work():
+            return service_module.is_active(), daemon_module.read_status()
+
+        def done(result, error):
+            if error:
+                self.service_row.set_subtitle(str(error))
+                return GLib.SOURCE_REMOVE
+            active, status = result
+            self.service_row.set_subtitle(_service_summary(active, status))
+            return GLib.SOURCE_REMOVE
+
+        self._run_async(work, done)
+
+    # -- main view: devices ---------------------------------------------------
+
+    def _reload_main(self):
         def work():
             account = self.registry.load_account() or {}
             devices = self.registry.list_devices()
@@ -298,23 +430,18 @@ class SyncWindow(Adw.ApplicationWindow):
             if mine is not None:
                 self.cfg.disabled_modules = list(mine.get("disabled_modules", []))
                 config_module.save(self.cfg)
-            if background_sync:
-                # Bring this device up to date with the shared profile,
-                # honouring what is disabled for this device.
-                self._engine().pull(self.cfg.enabled(list(self.modules)))
-                registry_module.register_this_device(self.registry, self.cfg)
-                devices = self.registry.list_devices()
             return account, devices
 
         def done(result, error):
             if error:
-                self._toast(f"Sync error: {error}")
+                self._toast(f"Couldn't load your devices: {error}")
                 self.account_row.set_subtitle("Couldn't load")
                 return GLib.SOURCE_REMOVE
             account, devices = result
             self.account_row.set_subtitle(
                 account.get("pretty_name") or account.get("username") or "Connected")
             self._fill_devices(devices)
+            self._refresh_service_status()
             return GLib.SOURCE_REMOVE
 
         self._run_async(work, done)
@@ -336,34 +463,6 @@ class SyncWindow(Adw.ApplicationWindow):
             row.connect("activated", lambda _r, d=device: self._show_device(d))
             self.devices_group.add(row)
             self.device_rows.append(row)
-
-    def _on_push(self, _button):
-        self._run_sync_action(
-            "Settings uploaded", lambda: self._engine().push(self.cfg.enabled(list(self.modules))))
-
-    def _on_pull(self, _button):
-        def work():
-            if self._engine().pull(self.cfg.enabled(list(self.modules))) is None:
-                raise ValueError("Nothing has been uploaded yet")
-
-        self._run_sync_action("Settings applied", work)
-
-    def _run_sync_action(self, success_message, work):
-        self.push_button.set_sensitive(False)
-        self.pull_button.set_sensitive(False)
-
-        def done(_result, error):
-            self.push_button.set_sensitive(True)
-            self.pull_button.set_sensitive(True)
-            if isinstance(error, ConflictError):
-                self._toast("Another device uploaded newer settings. Download them first.")
-            elif error:
-                self._toast(str(error))
-            else:
-                self._toast(success_message)
-            return GLib.SOURCE_REMOVE
-
-        self._run_async(work, done)
 
     # -- main view: one device's toggles --------------------------------------
 

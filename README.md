@@ -29,10 +29,14 @@ python3 main.py
 # połącz konto chmurowe (domyślnie OneDrive) przez interaktywny OAuth
 python3 -m asinux_sync.cli connect
 
-# wypchnij bieżący stan włączonych modułów do chmury
-python3 -m asinux_sync.cli push
+# jeden cykl synchronizacji w obie strony (to samo robi usługa w tle)
+python3 -m asinux_sync.cli sync
 
-# pobierz i zastosuj stan z chmury na tej maszynie
+# usługa systemd użytkownika (domyślnie włącza ją panel)
+python3 -m asinux_sync.cli service enable    # albo: disable
+
+# ręczny upload / download do debugowania
+python3 -m asinux_sync.cli push
 python3 -m asinux_sync.cli pull
 
 # pokaż bieżącą konfigurację lokalną
@@ -42,6 +46,14 @@ python3 -m asinux_sync.cli status
 Konfiguracja lokalna (nazwa remote'a rclone, id i nazwa urządzenia, lista
 wyłączonych modułów) żyje w `~/.config/asinux-sync/config.json` — to
 okablowanie, nie jest częścią synchronizowanego profilu.
+
+## Synchronizacja w tle
+
+`systemd/asinux-sync.service` to usługa **użytkownika** (nie systemowa — synchronizowane
+ustawienia żyją w dconf i katalogu domowym użytkownika). Panel instaluje ją do
+`~/.config/systemd/user/` i włącza; interwał (domyślnie 1 min, minimum 1 min) zmienia się
+w panelu i jest lokalny dla urządzenia. Cykl: lokalna zmiana → upload, zmiana z chmury →
+zastosowanie; gdy zmieniły się obie strony, wygrywa to urządzenie.
 
 ## Układ danych w chmurze
 

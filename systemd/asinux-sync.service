@@ -1,0 +1,16 @@
+[Unit]
+Description=Asinux Sync - keeps desktop settings in sync across your devices
+After=graphical-session.target network-online.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=@REPO@
+Environment=PYTHONPATH=@REPO@
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m asinux_sync.cli daemon
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=graphical-session.target

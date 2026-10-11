@@ -15,6 +15,8 @@ CONFIG_DIR = Path.home() / ".config" / "asinux-sync"
 CONFIG_PATH = CONFIG_DIR / "config.json"
 STATE_DIR = Path.home() / ".local" / "share" / "asinux-sync"
 
+MIN_INTERVAL_SECONDS = 60
+
 
 @dataclass
 class Config:
@@ -22,6 +24,8 @@ class Config:
     device_id: str = ""
     device_name: str = ""
     disabled_modules: list[str] = field(default_factory=list)
+    background_sync: bool = True
+    sync_interval_seconds: int = 60
 
     def enabled(self, all_module_ids: list[str]) -> list[str]:
         return [m for m in all_module_ids if m not in self.disabled_modules]

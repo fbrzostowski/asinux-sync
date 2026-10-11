@@ -71,11 +71,44 @@ def cmd_pull(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sync(args: argparse.Namespace) -> int:
+    from .daemon import tick
+
+    try:
+        print(tick(config_module.load()))
+    except RcloneError as exc:
+        print(f"Sync failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_daemon(args: argparse.Namespace) -> int:
+    import logging
+
+    from . import daemon
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    daemon.run()
+    return 0
+
+
+def cmd_service(args: argparse.Namespace) -> int:
+    from . import service
+
+    try:
+        {"enable": service.enable, "disable": service.disable}[args.action]()
+    except service.ServiceError as exc:
+        print(f"Service error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = config_module.load()
     print(f"remote:    {cfg.remote_name}")
     print(f"device:    {cfg.device_name or '(not registered)'}")
     print(f"modules:   {', '.join(cfg.enabled(list(REGISTRY)))}")
+    print(f"interval:  {cfg.sync_interval_seconds}s")
     print(f"connected: {RcloneBackend.exists(cfg.remote_name) if is_installed() else 'rclone not installed'}")
     return 0
 
@@ -96,6 +129,16 @@ def main(argv: list[str] | None = None) -> int:
 
     pull_p = sub.add_parser("pull", help="download and apply remote state")
     pull_p.set_defaults(func=cmd_pull)
+
+    sync_p = sub.add_parser("sync", help="run one two-way sync cycle now")
+    sync_p.set_defaults(func=cmd_sync)
+
+    daemon_p = sub.add_parser("daemon", help="run the background sync loop (used by the systemd user service)")
+    daemon_p.set_defaults(func=cmd_daemon)
+
+    service_p = sub.add_parser("service", help="enable or disable the background sync service")
+    service_p.add_argument("action", choices=["enable", "disable"])
+    service_p.set_defaults(func=cmd_service)
 
     status_p = sub.add_parser("status", help="show current config")
     status_p.set_defaults(func=cmd_status)
