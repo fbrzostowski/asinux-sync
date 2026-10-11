@@ -19,7 +19,9 @@ from asinux_sync.modules.default_apps import DefaultAppsModule
 from asinux_sync.modules.dock import DockModule
 from asinux_sync.modules.extensions import ExtensionsModule
 from asinux_sync.modules.layout import LayoutModule
+from asinux_sync.modules import notifications
 from asinux_sync.modules.multitasking import MultitaskingModule
+from asinux_sync.modules.notifications import NotificationsModule
 from asinux_sync.modules.power import PowerModule
 from asinux_sync.modules.profile_picture import ProfilePictureModule
 from asinux_sync.modules.shortcuts import ShortcutsModule
@@ -510,6 +512,84 @@ def test_multitasking_roundtrip_and_items_are_independent(assets_dir):
     MultitaskingModule().apply(captured, assets_dir, disabled_items={"workspace_count"})
     assert interface.get_boolean("enable-hot-corners") is False  # applied
     assert wm.get_int("num-workspaces") == 9  # that row is switched off here
+
+
+# -- notifications ----------------------------------------------------------------------------------
+
+NOTIFY = "org.gnome.desktop.notifications"
+NOTIFY_APP = NOTIFY + ".application"
+
+
+def app_settings(child):
+    return gs(NOTIFY_APP, f"/org/gnome/desktop/notifications/application/{child}/")
+
+
+@pytest.fixture
+def two_apps(monkeypatch):
+    gs(NOTIFY).set_strv("application-children", ["app-b", "app-a"])
+    app_settings("app-a").set_string("application-id", "a.desktop")
+    app_settings("app-b").set_string("application-id", "b.desktop")
+    names = {"a.desktop": "Zeta app", "b.desktop": "Alpha app"}
+    monkeypatch.setattr(notifications, "_app_name", lambda child, application_id: names.get(application_id, child))
+    return names
+
+
+def test_notifications_items_are_the_panel_switches_then_each_app(assets_dir, two_apps):
+    items = NotificationsModule().list_items()
+    assert [i.id for i in items] == ["do_not_disturb", "lock_screen", "app:app-b", "app:app-a"]
+    assert [i.name for i in items[2:]] == ["Alpha app", "Zeta app"]  # sorted by name
+
+
+def test_notifications_roundtrip(assets_dir, two_apps):
+    notify = gs(NOTIFY)
+    notify.set_boolean("show-banners", False)
+    notify.set_boolean("show-in-lock-screen", False)
+    app_a = app_settings("app-a")
+    app_a.set_boolean("enable-sound-alerts", False)
+    app_a.set_boolean("details-in-lock-screen", True)
+
+    def mutate():
+        notify.set_boolean("show-banners", True)
+        app_a.set_boolean("enable-sound-alerts", True)
+        app_a.set_boolean("details-in-lock-screen", False)
+        app_settings("app-b").set_boolean("enable", False)
+
+    roundtrip(NotificationsModule(), assets_dir, mutate)
+    assert notify.get_boolean("show-banners") is False
+    assert app_a.get_boolean("enable-sound-alerts") is False
+    assert app_a.get_boolean("details-in-lock-screen") is True
+    assert app_settings("app-b").get_user_value("enable") is None  # not set in the profile: reset
+
+
+def test_notifications_survive_uninstalled_apps():
+    # The real Gio call, not a stub: it raises for a .desktop file that doesn't exist.
+    assert notifications._desktop_info("definitely-not-installed.desktop") is None
+    assert notifications._app_name("gone-app", "definitely-not-installed.desktop") == "gone-app"
+    assert notifications._app_installed("definitely-not-installed.desktop") is False
+    assert notifications._app_name("no-id", "") == "no-id"
+
+
+def test_notifications_one_app_can_be_switched_off(assets_dir, two_apps):
+    app_a = app_settings("app-a")
+    app_a.set_boolean("enable", False)
+    captured = NotificationsModule().capture(assets_dir)
+    app_a.set_boolean("enable", True)
+    NotificationsModule().apply(captured, assets_dir, disabled_items={"app:app-a"})
+    assert app_a.get_boolean("enable") is True
+    assert "app:app-a" not in NotificationsModule().capture(assets_dir, disabled_items={"app:app-a"})["items"]
+
+
+def test_notifications_set_up_an_installed_app_not_known_here_yet(assets_dir, monkeypatch):
+    monkeypatch.setattr(notifications, "_app_installed", lambda application_id: application_id == "x.desktop")
+    monkeypatch.setattr(notifications, "_app_name", lambda child, application_id: child)
+    data = {"items": {
+        "app:org-x-y": {"application_id": "x.desktop", "values": {"enable": "false"}},
+        "app:not-here": {"application_id": "gone.desktop", "values": {"enable": "false"}},
+    }}
+    NotificationsModule().apply(data, assets_dir)
+    assert list(gs(NOTIFY).get_strv("application-children")) == ["org-x-y"]  # the missing app is not invented
+    assert app_settings("org-x-y").get_boolean("enable") is False
+    assert app_settings("org-x-y").get_string("application-id") == "x.desktop"
 
 
 # -- power --------------------------------------------------------------------------------------

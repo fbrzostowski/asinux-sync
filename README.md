@@ -71,6 +71,7 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 | `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts |
 | `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
 | `default_apps` | `~/.config/mimeapps.list` |
+| `notifications` | panel Powiadomień: Nie przeszkadzać, powiadomienia na ekranie blokady oraz — osobny element dla każdej aplikacji — jej sześć przełączników (powiadomienia, dźwięk, banery, treść banerów, ekran blokady, treść na blokadzie) |
 | `power` | wiersze panelu zasilania: przycisk zasilania, procent baterii, przyciemnianie, jasność automatyczna, oszczędzanie baterii, wygaszanie ekranu, usypianie na baterii i przy zasilaniu |
 | `profile_picture` | zdjęcie konta (AccountsService) |
 

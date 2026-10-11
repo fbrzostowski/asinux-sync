@@ -37,7 +37,7 @@ SCHEMAS = (
     "io.github.jeffshee.hanabi-extension", "org.gnome.desktop.wm.keybindings", "org.gnome.shell.keybindings",
     "org.gnome.mutter.keybindings", "org.gnome.mutter.wayland.keybindings",
     "org.gnome.settings-daemon.plugins.media-keys", "org.gnome.settings-daemon.plugins.power", "org.gnome.desktop.session",
-    "org.gnome.shell.app-switcher",
+    "org.gnome.shell.app-switcher", "org.gnome.desktop.notifications",
 )
 CUSTOM = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
 CUSTOM_PATH = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom%d/"
@@ -62,4 +62,6 @@ def clean_gsettings():
         wipe(schema_id)
     for index in range(10):
         wipe(CUSTOM, CUSTOM_PATH % index)
+    for child in ("app-a", "app-b", "org-x-y"):
+        wipe("org.gnome.desktop.notifications.application", f"/org/gnome/desktop/notifications/application/{child}/")
     yield
