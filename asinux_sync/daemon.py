@@ -32,11 +32,11 @@ def tick(cfg: config_module.Config) -> str:
     backend = RcloneBackend(cfg.remote_name)
     # Heartbeat first: it also adopts this device's module toggles, which may
     # have been changed from another device's panel.
-    registry_module.register_this_device(registry_module.Registry(backend), cfg)
-
     modules = {mid: cls() for mid, cls in REGISTRY.items()}
+    registry_module.register_this_device(registry_module.Registry(backend), cfg, modules)
+
     engine = SyncEngine(backend, modules, config_module.STATE_DIR)
-    return engine.sync_once(cfg.enabled(list(REGISTRY)))
+    return engine.sync_once(cfg.disabled_modules)
 
 
 def read_status() -> dict:

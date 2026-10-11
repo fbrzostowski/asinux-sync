@@ -42,9 +42,11 @@ def cmd_connect(args: argparse.Namespace) -> int:
 def cmd_push(args: argparse.Namespace) -> int:
     cfg = config_module.load()
     engine = _build_engine(cfg)
-    module_ids = args.modules or cfg.enabled(list(REGISTRY))
+    disabled = set(cfg.disabled_modules)
+    if args.modules:
+        disabled |= set(REGISTRY) - set(args.modules)
     try:
-        result = engine.push(module_ids, force=args.force)
+        result = engine.push(disabled, force=args.force)
     except ConflictError as exc:
         print(f"Conflict: {exc}", file=sys.stderr)
         print("Re-run with --force to overwrite, or `asinux-sync-cli pull` first to inspect the remote state.", file=sys.stderr)
@@ -60,7 +62,7 @@ def cmd_pull(args: argparse.Namespace) -> int:
     cfg = config_module.load()
     engine = _build_engine(cfg)
     try:
-        result = engine.pull(cfg.enabled(list(REGISTRY)))
+        result = engine.pull(cfg.disabled_modules)
     except RcloneError as exc:
         print(f"Pull failed: {exc}", file=sys.stderr)
         return 1
@@ -107,7 +109,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     cfg = config_module.load()
     print(f"remote:    {cfg.remote_name}")
     print(f"device:    {cfg.device_name or '(not registered)'}")
-    print(f"modules:   {', '.join(cfg.enabled(list(REGISTRY)))}")
+    print(f"modules:   {', '.join(m for m in REGISTRY if m not in cfg.disabled_modules)}")
+    print(f"switched off: {', '.join(cfg.disabled_modules) or 'nothing'}")
     print(f"interval:  {cfg.sync_interval_seconds}s")
     print(f"connected: {RcloneBackend.exists(cfg.remote_name) if is_installed() else 'rclone not installed'}")
     return 0

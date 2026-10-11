@@ -63,18 +63,34 @@ class Registry:
     def save_device(self, device: dict) -> None:
         self.backend.rcat(f"{DEVICES_DIR}/{device['id']}.json", json.dumps(device, indent=2).encode())
 
-    def set_device_module(self, device_id: str, module_id: str, enabled: bool) -> dict:
+    def set_device_module(self, device_id: str, key: str, enabled: bool) -> dict:
+        """Switch a module ("background") or one item of it ("appearance.icon_theme") on or off."""
         device = self.get_device(device_id)
         if device is None:
             raise RcloneError("device is no longer registered")
         disabled = set(device.get("disabled_modules", []))
-        (disabled.discard if enabled else disabled.add)(module_id)
+        (disabled.discard if enabled else disabled.add)(key)
         device["disabled_modules"] = sorted(disabled)
         self.save_device(device)
         return device
 
 
-def register_this_device(registry: Registry, cfg: config_module.Config) -> None:
+def build_catalog(modules: dict) -> dict:
+    """What can be switched off on this device: module -> its items.
+
+    Stored in the device's registry entry so another device's panel can show
+    this device's items (e.g. its extensions), not its own."""
+    catalog = {}
+    for module_id, module in modules.items():
+        try:
+            items = module.list_items()
+        except Exception:  # a broken module must not stop the heartbeat
+            continue
+        catalog[module_id] = [{"id": i.id, "name": i.name, "description": i.description} for i in items]
+    return catalog
+
+
+def register_this_device(registry: Registry, cfg: config_module.Config, modules: dict | None = None) -> None:
     """Create or refresh this device's registry entry and persist cfg.
 
     The cloud entry is the source of truth for `disabled_modules` (it can be
@@ -92,6 +108,7 @@ def register_this_device(registry: Registry, cfg: config_module.Config) -> None:
             "name": cfg.device_name,
             "hostname": socket.gethostname(),
             "disabled_modules": cfg.disabled_modules,
+            "catalog": build_catalog(modules) if modules is not None else (existing or {}).get("catalog", {}),
             "last_seen": now_iso(),
         }
     )

@@ -1,4 +1,4 @@
-from .gsettings_module import GSettingsModule
+from .gsettings_module import Group, GSettingsModule
 
 
 class DockModule(GSettingsModule):
@@ -8,4 +8,4 @@ class DockModule(GSettingsModule):
     category = "Look and feel"
 
     # The stock GNOME key; dash-to-dock and the app grid read it too.
-    schemas = {"org.gnome.shell": ("favorite-apps",)}
+    groups = (Group("all", "Pinned apps", "Apps pinned to the dock and launcher", {"org.gnome.shell": ("favorite-apps",)}),)

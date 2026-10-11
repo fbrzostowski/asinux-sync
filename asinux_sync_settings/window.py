@@ -14,6 +14,7 @@ from asinux_sync import daemon as daemon_module
 from asinux_sync import registry as registry_module
 from asinux_sync import service as service_module
 from asinux_sync import system_defaults
+from asinux_sync import ui_cache
 from asinux_sync.cloud.rclone import RcloneBackend, RcloneError, is_installed
 from asinux_sync.engine import SyncEngine
 from asinux_sync.modules import REGISTRY
@@ -89,6 +90,7 @@ class SyncWindow(Adw.ApplicationWindow):
         self.set_content(self.toast_overlay)
 
         self.auth_process = None
+        self._toggle_lock = threading.Lock()
         self.connect("close-request", self._on_close_request)
 
         self._start()
@@ -298,10 +300,10 @@ class SyncWindow(Adw.ApplicationWindow):
         def work():
             if account is not None:
                 self.registry.save_account(account)
-            registry_module.register_this_device(self.registry, self.cfg)
+            registry_module.register_this_device(self.registry, self.cfg, self.modules)
             if account is not None:
                 # First device ever: its current state becomes the shared profile.
-                self._engine().push(self.cfg.enabled(list(self.modules)), force=True)
+                self._engine().push(self.cfg.disabled_modules, force=True)
 
         def done(_result, error):
             if error:
@@ -319,7 +321,7 @@ class SyncWindow(Adw.ApplicationWindow):
         page = Adw.PreferencesPage()
 
         account_group = Adw.PreferencesGroup(title="Account")
-        self.account_row = Adw.ActionRow(title="OneDrive", subtitle="Loading…")
+        self.account_row = Adw.ActionRow(title="OneDrive", subtitle="Loading…", use_markup=False)
         account_group.add(self.account_row)
         page.add(account_group)
 
@@ -333,6 +335,11 @@ class SyncWindow(Adw.ApplicationWindow):
         refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Refresh")
         refresh.connect("clicked", lambda _b: self._reload_main())
         self._set_root(_page("Asinux Sync", page, header_end=[refresh]))
+        # Show what we saw last time right away; fresher data replaces it
+        # as soon as the cloud answers.
+        self.cached = ui_cache.load()
+        if self.cached:
+            self._show_account_and_devices(self.cached, "updating…")
         self._reload_main()
         self._ensure_service()
 
@@ -422,7 +429,19 @@ class SyncWindow(Adw.ApplicationWindow):
 
     # -- main view: devices ---------------------------------------------------
 
+    def _show_account_and_devices(self, data, status=""):
+        account = data.get("account") or {}
+        name = account.get("pretty_name") or account.get("username") or "Connected"
+        self.account_row.set_subtitle(f"{name} · {status}" if status else name)
+        self._fill_devices(data.get("devices", []))
+
     def _reload_main(self):
+        cached = getattr(self, "cached", None)
+        if cached:
+            self._show_account_and_devices(cached, "updating…")
+        else:
+            self.account_row.set_subtitle("Loading…")
+
         def work():
             account = self.registry.load_account() or {}
             devices = self.registry.list_devices()
@@ -430,23 +449,30 @@ class SyncWindow(Adw.ApplicationWindow):
             if mine is not None:
                 self.cfg.disabled_modules = list(mine.get("disabled_modules", []))
                 config_module.save(self.cfg)
-            return account, devices
+            fetched = {"fetched_at": registry_module.now_iso(), "account": account, "devices": devices}
+            ui_cache.save(account, devices, fetched["fetched_at"])
+            return fetched
 
-        def done(result, error):
+        def done(fetched, error):
             if error:
-                self._toast(f"Couldn't load your devices: {error}")
-                self.account_row.set_subtitle("Couldn't load")
+                if self.cached:
+                    self._show_account_and_devices(
+                        self.cached, f"offline, showing data from {_format_time(self.cached.get('fetched_at'))}")
+                else:
+                    self.account_row.set_subtitle("Couldn't load")
+                self._toast(f"Couldn't reach your cloud: {error}")
                 return GLib.SOURCE_REMOVE
-            account, devices = result
-            self.account_row.set_subtitle(
-                account.get("pretty_name") or account.get("username") or "Connected")
-            self._fill_devices(devices)
+            self.cached = fetched
+            self._show_account_and_devices(fetched)
             self._refresh_service_status()
             return GLib.SOURCE_REMOVE
 
         self._run_async(work, done)
 
     def _fill_devices(self, devices):
+        if devices == getattr(self, "_shown_devices", None):
+            return  # same list as already on screen: don't rebuild (and flicker)
+        self._shown_devices = devices
         for row in self.device_rows:
             self.devices_group.remove(row)
         self.device_rows = []
@@ -470,37 +496,65 @@ class SyncWindow(Adw.ApplicationWindow):
         is_me = device["id"] == self.cfg.device_id
         page = Adw.PreferencesPage()
         if is_me:
-            group = Adw.PreferencesGroup(
+            intro = Adw.PreferencesGroup(
                 title="Synchronized on this device",
                 description="Turn a category off to keep this computer's own setting - it is then "
-                            "neither uploaded nor overwritten by other devices.")
+                            "neither uploaded nor overwritten by other devices. Expand a category "
+                            "to switch off single parts of it.")
         else:
-            group = Adw.PreferencesGroup(
+            intro = Adw.PreferencesGroup(
                 title=f"Synchronized on {device.get('name', 'this device')}",
                 description="Changes are saved to your cloud and take effect the next time "
                             "that device syncs.")
+        page.add(intro)
+
         disabled = set(device.get("disabled_modules", []))
-        page.add(group)
+        # Another device's own list of items (its extensions...) if it has published one.
+        catalog = device.get("catalog") or {}
+        if is_me:
+            catalog = registry_module.build_catalog(self.modules)
+
         groups = {}
         for module_id, module in self.modules.items():
+            items = catalog.get(module_id)
+            if items is None:
+                items = [{"id": i.id, "name": i.name, "description": i.description} for i in module.list_items()]
             if module.category not in groups:
                 groups[module.category] = Adw.PreferencesGroup(title=module.category)
                 page.add(groups[module.category])
-            row = Adw.SwitchRow(
-                title=module.display_name or module_id,
-                subtitle=module.description,
-                active=module_id not in disabled,
-                use_markup=False,
-            )
-            row.connect("notify::active", self._on_module_toggled, device["id"], module_id, is_me)
-            groups[module.category].add(row)
+            groups[module.category].add(
+                self._module_row(device["id"], module_id, module, items, disabled, is_me))
         self.nav.push(_page(device.get("name", "Device"), page))
 
-    def _on_module_toggled(self, row, _pspec, device_id, module_id, is_me):
-        enabled = row.get_active()
+    def _module_row(self, device_id, module_id, module, items, disabled, is_me):
+        if len(items) <= 1:
+            row = Adw.SwitchRow(
+                title=module.display_name, subtitle=module.description,
+                active=module_id not in disabled, use_markup=False)
+            row.connect("notify::active", self._on_module_toggled, device_id, module_id, is_me)
+            return row
+
+        row = Adw.ExpanderRow(
+            title=module.display_name, subtitle=module.description, use_markup=False,
+            show_enable_switch=True, enable_expansion=module_id not in disabled)
+        row.connect("notify::enable-expansion", self._on_module_toggled, device_id, module_id, is_me)
+        for item in items:
+            key = f"{module_id}.{item['id']}"
+            item_row = Adw.SwitchRow(
+                title=item["name"], subtitle=item.get("description", ""),
+                active=key not in disabled, use_markup=False)
+            item_row.connect("notify::active", self._on_module_toggled, device_id, key, is_me)
+            row.add_row(item_row)
+        return row
+
+    def _on_module_toggled(self, row, _pspec, device_id, key, is_me):
+        # `key` is "<module>" for a whole category, "<module>.<item>" for one part.
+        enabled = row.get_enable_expansion() if isinstance(row, Adw.ExpanderRow) else row.get_active()
 
         def work():
-            return self.registry.set_device_module(device_id, module_id, enabled)
+            # Read-modify-write of one cloud file: quick successive clicks must queue up.
+            with self._toggle_lock:
+                return self.registry.set_device_module(device_id, key, enabled)
 
         def done(device, error):
             if error:

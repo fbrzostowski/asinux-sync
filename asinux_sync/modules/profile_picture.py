@@ -45,11 +45,11 @@ class ProfilePictureModule(SyncModule):
     description = "Your account picture on the login screen and in the system menu"
     category = "System"
 
-    def capture(self, assets_dir: Path) -> dict:
+    def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         icon = _current_icon(_user_proxy())
         return {"icon": assets.store_file(self.module_id, icon, assets_dir) if icon else None}
 
-    def apply(self, data: dict, assets_dir: Path) -> None:
+    def apply_item(self, item_id: str, data: dict, assets_dir: Path) -> None:
         asset = data.get("icon")
         if not asset:
             return  # no picture to restore (and there is no way to "unset" one)

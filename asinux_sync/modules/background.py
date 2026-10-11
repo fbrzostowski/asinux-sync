@@ -23,7 +23,7 @@ gi.require_version("Gio", "2.0")
 from gi.repository import GLib  # noqa: E402
 
 from . import assets, gsettings_util
-from .base import SyncModule
+from .base import Item, SyncModule
 
 logger = logging.getLogger(__name__)
 
@@ -54,43 +54,66 @@ def _hanabi_keys() -> tuple[str, ...]:
     return tuple(k for k in found.list_keys() if k not in HANABI_LOCAL_ONLY) if found else ()
 
 
+# item id -> (schema, keys). The URI keys are the ones that can point at a file.
+PICTURES = {
+    "desktop": (BACKGROUND_SCHEMA, _BACKGROUND_KEYS),
+    "lockscreen": (SCREENSAVER_SCHEMA, _SCREENSAVER_KEYS),
+}
+
+
 class BackgroundModule(SyncModule):
     module_id = "background"
     display_name = "Wallpaper"
-    description = "Desktop and lock screen pictures, your dynamic wallpapers, live wallpaper (Hanabi), Damask"
+    description = "Desktop and lock screen pictures, live wallpaper, automatic wallpapers"
     category = "Look and feel"
+
+    def list_items(self) -> list[Item]:
+        items = [
+            Item("desktop", "Desktop wallpaper", "Light and dark picture and how it fits, including your own dynamic wallpapers"),
+            Item("lockscreen", "Lock screen picture"),
+        ]
+        if gsettings_util.schema(HANABI_SCHEMA) is not None:
+            items.append(Item("live_wallpaper", "Live wallpaper (Hanabi)", "Video, volume, fit and pause rules"))
+        if DAMASK_APP_DIR.is_dir():
+            items.append(Item("damask", "Automatic wallpapers (Damask)", "Which source Damask uses"))
+        return items
 
     # -- capture ----------------------------------------------------------
 
-    def capture(self, assets_dir: Path) -> dict:
+    def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
+        if item_id in PICTURES:
+            return self._capture_picture(*PICTURES[item_id], assets_dir)
+        if item_id == "live_wallpaper":
+            hanabi = gsettings_util.capture_keys(HANABI_SCHEMA, _hanabi_keys())
+            if hanabi is None:
+                return None
+            video = gsettings_util.get_string(HANABI_SCHEMA, "video-path")
+            video_asset = assets.store_file(self.module_id, Path(video), assets_dir) if video else None
+            return {"values": hanabi, "video": video_asset}
+        if item_id == "damask" and DAMASK_KEYFILE.is_file():
+            return {"keyfile": DAMASK_KEYFILE.read_text(encoding="utf-8")}
+        return None
+
+    def _capture_picture(self, schema_id: str, keys: tuple[str, ...], assets_dir: Path) -> dict:
         data: dict = {
-            "background": {k: gsettings_util.get_string(BACKGROUND_SCHEMA, k) for k in _BACKGROUND_KEYS},
-            "screensaver": {k: gsettings_util.get_string(SCREENSAVER_SCHEMA, k) for k in _SCREENSAVER_KEYS},
+            "values": {k: gsettings_util.get_string(schema_id, k) for k in keys},
             "assets": {},
             "bundles": {},
         }
-        for section, keys in (("background", ("picture-uri", "picture-uri-dark")), ("screensaver", ("picture-uri",))):
-            for key in keys:
-                path = _uri_to_path(data[section][key])
-                if path is None or assets.is_system_path(path) or not path.is_file():
-                    continue
-                if path.suffix.lower() == ".xml":
-                    bundle = self._store_dynamic_wallpaper(path, assets_dir)
-                    if bundle:
-                        data["bundles"][f"{section}.{key}"] = bundle
-                else:
-                    asset = assets.store_file(self.module_id, path, assets_dir)
-                    if asset:
-                        data["assets"][f"{section}.{key}"] = asset
-
-        hanabi = gsettings_util.capture_keys(HANABI_SCHEMA, _hanabi_keys())
-        if hanabi is not None:
-            video = gsettings_util.get_string(HANABI_SCHEMA, "video-path")
-            video_asset = assets.store_file(self.module_id, Path(video), assets_dir) if video else None
-            data["hanabi"] = {"values": hanabi, "video": video_asset}
-
-        if DAMASK_KEYFILE.is_file():
-            data["damask"] = DAMASK_KEYFILE.read_text(encoding="utf-8")
+        for key in keys:
+            if not key.endswith("uri"):
+                continue
+            path = _uri_to_path(data["values"][key])
+            if path is None or assets.is_system_path(path) or not path.is_file():
+                continue
+            if path.suffix.lower() == ".xml":
+                bundle = self._store_dynamic_wallpaper(path, assets_dir)
+                if bundle:
+                    data["bundles"][key] = bundle
+            else:
+                asset = assets.store_file(self.module_id, path, assets_dir)
+                if asset:
+                    data["assets"][key] = asset
         return data
 
     def _store_dynamic_wallpaper(self, xml_path: Path, assets_dir: Path) -> str | None:
@@ -122,32 +145,30 @@ class BackgroundModule(SyncModule):
 
     # -- apply ------------------------------------------------------------
 
-    def apply(self, data: dict, assets_dir: Path) -> None:
-        for section, schema_id, keys in (
-            ("background", BACKGROUND_SCHEMA, _BACKGROUND_KEYS),
-            ("screensaver", SCREENSAVER_SCHEMA, _SCREENSAVER_KEYS),
-        ):
-            values = {}
-            for key in keys:
-                if key not in data.get(section, {}):
-                    continue
-                value = data[section][key]
-                if key.endswith("uri"):
-                    restored = self._restore(f"{section}.{key}", data, assets_dir)
-                    if restored is not None:
-                        value = restored.as_uri()
-                    else:
-                        path = _uri_to_path(value)
-                        if path is not None and not path.exists():
-                            logger.warning("background: %s is missing here, leaving %s.%s alone", path, section, key)
-                            continue
-                values[key] = GLib.Variant("s", value).print_(False)
-            self._apply_present(schema_id, values)
+    def apply_item(self, item_id: str, data: dict, assets_dir: Path) -> None:
+        if item_id in PICTURES:
+            self._apply_picture(*PICTURES[item_id], data, assets_dir)
+        elif item_id == "live_wallpaper":
+            self._apply_hanabi(data, assets_dir)
+        elif item_id == "damask" and DAMASK_APP_DIR.is_dir():
+            self._write_if_different(DAMASK_KEYFILE, data["keyfile"])
 
-        if "hanabi" in data:
-            self._apply_hanabi(data["hanabi"], assets_dir)
-        if "damask" in data and DAMASK_APP_DIR.is_dir():
-            self._write_if_different(DAMASK_KEYFILE, data["damask"])
+    def _apply_picture(self, schema_id: str, keys: tuple[str, ...], data: dict, assets_dir: Path) -> None:
+        for key in keys:
+            if key not in data.get("values", {}):
+                continue
+            value = data["values"][key]
+            if key.endswith("uri"):
+                restored = self._restore(key, data, assets_dir)
+                if restored is not None:
+                    value = restored.as_uri()
+                else:
+                    path = _uri_to_path(value)
+                    if path is not None and not path.exists():
+                        logger.warning("background: %s is missing here, leaving %s alone", path, key)
+                        continue
+            # Only the keys this profile carries: nothing here is reset to default.
+            gsettings_util.apply_keys(schema_id, (key,), {key: GLib.Variant("s", value).print_(False)})
 
     def _restore(self, slot: str, data: dict, assets_dir: Path) -> Path | None:
         if slot in data.get("bundles", {}):
@@ -166,13 +187,6 @@ class BackgroundModule(SyncModule):
                 logger.warning("background: asset %s missing, skipping %s", data["assets"][slot], slot)
             return restored
         return None
-
-    @staticmethod
-    def _apply_present(schema_id: str, values: dict[str, str]) -> None:
-        # Only the keys this profile carries: unlike the allowlist modules,
-        # nothing here should be reset to default.
-        for key, text in values.items():
-            gsettings_util.apply_keys(schema_id, (key,), {key: text})
 
     def _apply_hanabi(self, hanabi: dict, assets_dir: Path) -> None:
         values = dict(hanabi.get("values", {}))

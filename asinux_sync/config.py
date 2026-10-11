@@ -23,12 +23,11 @@ class Config:
     remote_name: str = "asinux-cloud"
     device_id: str = ""
     device_name: str = ""
+    # Switch-off list: "<module>" for a whole module, "<module>.<item>" for one
+    # item of it. A cache of this device's entry in the cloud registry.
     disabled_modules: list[str] = field(default_factory=list)
     background_sync: bool = True
     sync_interval_seconds: int = 60
-
-    def enabled(self, all_module_ids: list[str]) -> list[str]:
-        return [m for m in all_module_ids if m not in self.disabled_modules]
 
 
 def load() -> Config:

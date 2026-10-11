@@ -17,6 +17,7 @@ import json
 import logging
 import socket
 import uuid
+from collections.abc import Collection
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 PROFILE_FILENAME = "profile.json"
 STATE_FILENAME = "state.json"
 LOCK_FILENAME = "lock"
-PROFILE_VERSION = 1
+PROFILE_VERSION = 2  # 2: modules hold {"items": {...}}; version 1 profiles can't be read
 
 
 class ConflictError(RuntimeError):
@@ -72,8 +73,11 @@ class SyncEngine:
         return "asinux-sync/profile"
 
     # -- public operations ------------------------------------------------
+    #
+    # `disabled` is this device's switch-off list: "<module>" turns a whole
+    # module off, "<module>.<item>" one item of it.
 
-    def sync_once(self, enabled_module_ids: list[str]) -> str:
+    def sync_once(self, disabled: Collection[str] = ()) -> str:
         """One two-way sync cycle, as run by the background service.
 
         Returns "pushed", "pulled" or "idle". Decision table:
@@ -87,19 +91,28 @@ class SyncEngine:
           wins). Changes are noticed within one interval, so a local change
           is at most that old and is the most recent edit.
         - neither                                   -> idle
+
+        A cloud profile in an older format is replaced by the first device
+        that has already synced (it migrates it); a brand-new device leaves
+        it alone and waits, so it can't wipe settings it can't read.
         """
+        disabled = set(disabled)
         with self._locked():
             remote = self._download()
             state = self._load_state()
-            local = self._capture(enabled_module_ids)
+            if remote is not None and remote.get("version", 1) < PROFILE_VERSION:
+                if state is None:
+                    return "idle"
+                remote = None
+            local = self._capture(disabled)
             digest = _digest(local)
 
             if remote is None:
-                self._upload(remote, local, digest)
+                self._upload(None, local, digest)
                 return "pushed"
             if state is None:
-                self._apply(remote, enabled_module_ids)
-                self._save_state(remote, _digest(self._capture(enabled_module_ids)))
+                self._apply(remote, disabled)
+                self._save_state(remote, _digest(self._capture(disabled)))
                 return "pulled"
 
             remote_changed = remote.get("revision") != state.get("last_synced_revision")
@@ -108,36 +121,32 @@ class SyncEngine:
                 self._upload(remote, local, digest)
                 return "pushed"
             if remote_changed:
-                self._apply(remote, enabled_module_ids)
-                self._save_state(remote, _digest(self._capture(enabled_module_ids)))
+                self._apply(remote, disabled)
+                self._save_state(remote, _digest(self._capture(disabled)))
                 return "pulled"
             return "idle"
 
-    def push(self, enabled_module_ids: list[str], *, force: bool = False) -> SyncResult:
+    def push(self, disabled: Collection[str] = (), *, force: bool = False) -> SyncResult:
+        disabled = set(disabled)
         with self._locked():
             remote = self._download()
             if remote is not None and not force:
                 self._check_for_conflict(remote)
-            local = self._capture(enabled_module_ids)
+            local = self._capture(disabled)
             profile = self._upload(remote, local, _digest(local))
             return SyncResult(profile=profile, applied_modules=list(local))
 
-    def pull(self, enabled_module_ids: list[str] | None = None) -> SyncResult | None:
-        """Download the remote profile and apply it locally.
-
-        `enabled_module_ids` is this *device's* allowlist (derived from
-        Config.enabled()) - a module present in the remote profile but
-        disabled on this device is downloaded but deliberately NOT applied.
-        This is what lets one machine opt a category like `background` out of
-        sync entirely and keep its own local wallpaper across pulls.
-        """
+    def pull(self, disabled: Collection[str] = ()) -> SyncResult | None:
+        """Download the remote profile and apply it locally. Whatever is on
+        this device's switch-off list is downloaded but deliberately NOT
+        applied - that is what lets one machine keep its own wallpaper."""
+        disabled = set(disabled)
         with self._locked():
             remote = self._download()
-            if remote is None:
-                return None  # nothing has ever been pushed yet
-            applied = self._apply(remote, enabled_module_ids)
-            ids = enabled_module_ids if enabled_module_ids is not None else list(self.modules)
-            self._save_state(remote, _digest(self._capture(ids)))
+            if remote is None or remote.get("version", 1) < PROFILE_VERSION:
+                return None  # nothing (readable) has been pushed yet
+            applied = self._apply(remote, disabled)
+            self._save_state(remote, _digest(self._capture(disabled)))
             return SyncResult(profile=remote, applied_modules=applied)
 
     # -- building blocks (call with the lock held) -------------------------
@@ -153,37 +162,40 @@ class SyncEngine:
             return None
         return json.loads(profile_path.read_text())
 
-    def _capture(self, module_ids: list[str]) -> dict:
-        """Capture each module, leaving out any that can't be captured here.
+    @staticmethod
+    def _disabled_items(module_id: str, disabled: set[str]) -> set[str]:
+        prefix = f"{module_id}."
+        return {key[len(prefix):] for key in disabled if key.startswith(prefix)}
 
-        A module missing from the result is simply not touched in the cloud
-        profile (see _upload), so one broken or unavailable module never
-        blocks - or wipes - the rest."""
+    def _capture(self, disabled: set[str]) -> dict:
+        """Capture each module that is switched on, leaving out any that
+        can't be captured here.
+
+        A module (or item) missing from the result is simply not touched in
+        the cloud profile (see _upload), so one broken or unavailable module
+        never blocks - or wipes - the rest."""
         self.assets_dir.mkdir(parents=True, exist_ok=True)
         captured = {}
-        for module_id in module_ids:
-            module = self.modules.get(module_id)
-            if module is None:
+        for module_id, module in self.modules.items():
+            if module_id in disabled:
                 continue
             try:
-                captured[module_id] = module.capture(self.assets_dir)
+                captured[module_id] = module.capture(self.assets_dir, self._disabled_items(module_id, disabled))
             except ModuleUnavailable as exc:
                 logger.info("%s unavailable here: %s", module_id, exc)
             except Exception:
                 logger.exception("capturing %s failed, skipping it", module_id)
         return captured
 
-    def _apply(self, profile: dict, enabled_module_ids: list[str] | None) -> list[str]:
+    def _apply(self, profile: dict, disabled: set[str]) -> list[str]:
         applied = []
         profile_modules = profile.get("modules", {})
         # Our own registry order, not the profile's: it is the intended apply order.
         for module_id, module in self.modules.items():
-            if module_id not in profile_modules:
-                continue  # unknown to the profile (older client / newer module)
-            if enabled_module_ids is not None and module_id not in enabled_module_ids:
-                continue  # disabled on this device - leave local state alone
+            if module_id not in profile_modules or module_id in disabled:
+                continue
             try:
-                module.apply(profile_modules[module_id], self.assets_dir)
+                module.apply(profile_modules[module_id], self.assets_dir, self._disabled_items(module_id, disabled))
             except ModuleUnavailable as exc:
                 logger.info("%s unavailable here: %s", module_id, exc)
                 continue
@@ -194,10 +206,15 @@ class SyncEngine:
         return applied
 
     def _upload(self, remote: dict | None, local: dict, digest: str) -> dict:
-        # Start from the cloud's modules so categories this device has
-        # disabled (and therefore didn't capture) are kept for other devices.
-        modules = dict(remote.get("modules", {})) if remote else {}
-        modules.update(local)
+        # Merge item by item into the cloud's profile: whatever this device
+        # didn't capture (switched off, unavailable, not installed here)
+        # stays as the other devices left it.
+        modules = {mid: {"items": dict(m.get("items", {}))} for mid, m in (remote or {}).get("modules", {}).items()}
+        for module_id, captured in local.items():
+            cloud_items = modules.setdefault(module_id, {"items": {}})["items"]
+            for item_id, data in captured.get("items", {}).items():
+                existing = cloud_items.get(item_id)
+                cloud_items[item_id] = self.modules[module_id].merge_item(item_id, existing, data) if existing else data
         profile = {
             "version": PROFILE_VERSION,
             "updated_at": _now_iso(),

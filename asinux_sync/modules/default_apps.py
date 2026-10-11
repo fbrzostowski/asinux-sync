@@ -19,13 +19,13 @@ class DefaultAppsModule(SyncModule):
 
     # default_apps_settings.py edits this same file (through Gio.AppInfo), so
     # syncing the plain XDG file is equivalent and needs no GIO round-trips.
-    def capture(self, assets_dir: Path) -> dict:
+    def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         try:
             return {"mimeapps": mimeapps_path().read_text(encoding="utf-8")}
         except OSError:
             return {"mimeapps": None}
 
-    def apply(self, data: dict, assets_dir: Path) -> None:
+    def apply_item(self, item_id: str, data: dict, assets_dir: Path) -> None:
         text = data.get("mimeapps")
         if text is None:
             return

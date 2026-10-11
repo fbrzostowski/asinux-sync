@@ -60,16 +60,27 @@ zastosowanie; gdy zmieniły się obie strony, wygrywa to urządzenie.
 Każda kategoria to moduł (`asinux_sync/modules/`) z jawną listą kluczy — nie zrzut całego dconf.
 W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 
-| Moduł | Zawartość |
+| Moduł | Elementy (każdy do wyłączenia osobno) |
 |---|---|
-| `background` | tapeta pulpitu/blokady, własne dynamiczne tapety (XML razem z obrazami), Hanabi (ustawienia + wideo), Damask |
-| `appearance` | motyw GTK/shell/ikon/kursora, schemat kolorów, akcent; motywy zainstalowane przez użytkownika jadą jako archiwa |
-| `window` | przyciski i akcje paska tytułu, focus, pozycja nowych okien |
+| `background` | tapeta pulpitu (jasna/ciemna, dopasowanie, własne dynamiczne tapety z obrazami), obraz ekranu blokady, live wallpaper Hanabi, Damask |
+| `appearance` | motyw aplikacji (GTK), ikony, motyw kursora, rozmiar kursora, jasny/ciemny, kolor akcentu, motyw shella; motywy zainstalowane przez użytkownika jadą jako archiwa |
+| `window` | przyciski paska tytułu, kliknięcia paska tytułu, focus, klawisz modyfikatora okien, nowe okna |
 | `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
-| `layout` | włączone rozszerzenia GNOME Shell + ich ustawienia (przez `/opt/asinux-layouts`) |
-| `shortcuts` | skróty systemowe i własne |
+| `extensions` | włączone/wyłączone rozszerzenia GNOME Shell — jeden element na zainstalowane rozszerzenie |
+| `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts |
+| `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
 | `default_apps` | `~/.config/mimeapps.list` |
 | `profile_picture` | zdjęcie konta (AccountsService) |
+
+Przełączniki są zapisane w lokalnej liście urządzenia jako `<moduł>` (cała kategoria) lub
+`<moduł>.<element>`. Profil w chmurze jest podzielony na elementy (`{"items": {...}}`), więc
+element wyłączony na jednym urządzeniu zostaje w chmurze nietknięty dla pozostałych. Każde
+urządzenie publikuje własną listę elementów (`catalog`), dzięki czemu panel pokazuje u innego
+komputera jego rozszerzenia, a nie te z bieżącego.
+
+Format profilu ma wersję 2. Starszy profil w chmurze zostaje przejęty przez pierwsze urządzenie,
+które już się synchronizowało; zupełnie nowe urządzenie czeka i niczego nie nadpisuje. Wszystkie
+komputery warto zaktualizować (`git pull` + `systemctl --user restart asinux-sync`).
 
 Zsynchronizowane są tylko wartości ustawione przez użytkownika; klucz zostawiony domyślnie na
 jednym urządzeniu jest resetowany na pozostałych. Nazwa użytkownika nie jest modułem — powstaje
