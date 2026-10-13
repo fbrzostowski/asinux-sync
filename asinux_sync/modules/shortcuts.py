@@ -54,6 +54,11 @@ class ShortcutsModule(GSettingsModule):
     def list_items(self) -> list[Item]:
         return super().list_items() + [Item(CUSTOM, "Custom shortcuts", "Shortcuts you added yourself")]
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        if item_id == CUSTOM:
+            return not data.get("custom")
+        return super().is_default(item_id, data)
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         if item_id != CUSTOM:
             return super().capture_item(item_id, assets_dir)

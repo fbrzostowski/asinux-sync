@@ -31,6 +31,9 @@ class GSettingsModule(SyncModule):
     def _group(self, item_id: str) -> Group:
         return next(g for g in self.group_specs() if g.id == item_id)
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        return not any(data.get("values", {}).values())
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         values = {}
         for schema_id, keys in self._group(item_id).schemas.items():

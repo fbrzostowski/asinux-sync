@@ -334,3 +334,60 @@ def test_cloud_has_item(tmp_path):
     a.sync_once()
     assert a.cloud_has_item("background.a") is True
     assert a.cloud_has_item("theme.a") is False
+
+
+# -- a freshly installed device must not push its defaults ------------------------------------------
+
+class DefaultAware(FakeModule):
+    """Like the GSettings modules: always reports data, but knows when it is all defaults."""
+
+    def capture_item(self, item_id, assets_dir):
+        return {"value": self.store.get(f"{self.module_id}.{item_id}")}
+
+    def is_default(self, item_id, data):
+        return data["value"] is None
+
+
+def test_a_fresh_device_does_not_upload_its_defaults_for_items_the_cloud_lacks(tmp_path):
+    cloud = tmp_path / "cloud"
+    a, store_a = make_device(tmp_path, "a", cloud)
+    store_a["background.a"] = "wall1"
+    a.sync_once()  # the cloud has the wallpaper, nothing about the theme yet
+
+    b, store_b = make_device(tmp_path, "b", cloud)
+    store_b["theme.a"] = "installer-default"  # what a fresh install happens to have
+    b.sync_once()  # B's first sync
+    assert "theme" not in cloud_profile(cloud)["modules"]  # its defaults did not become "the profile"
+
+    store_a["theme.a"] = "dark"  # A, who actually customised the theme, syncs it for the first time
+    assert a.sync_once() == "pushed"
+    assert store_a["theme.a"] == "dark"  # not replaced by B's installer value
+    assert b.sync_once() == "pulled" and store_b["theme.a"] == "dark"  # B takes what the cloud has
+
+
+def test_what_a_fresh_device_changes_after_joining_is_uploaded(tmp_path):
+    cloud = tmp_path / "cloud"
+    a, store_a = make_device(tmp_path, "a", cloud)
+    store_a["background.a"] = "wall1"
+    a.sync_once()
+    b, store_b = make_device(tmp_path, "b", cloud)
+    store_b["theme.a"] = "installer-default"
+    b.sync_once()
+
+    store_b["theme.a"] = "my-choice"
+    assert b.sync_once() == "pushed"
+    assert cloud_profile(cloud)["modules"]["theme"]["items"]["a"] == {"value": "my-choice"}
+
+
+def test_an_established_device_does_not_upload_default_values_of_a_new_module(tmp_path):
+    cloud = tmp_path / "cloud"
+    modules = lambda store: {"background": FakeModule("background", store), "extra": DefaultAware("extra", store)}  # noqa: E731
+    store_d, store_e = {"background.a": "wall"}, {"background.a": "wall"}
+    d = SyncEngine(DirBackend(cloud), modules(store_d), tmp_path / "d")
+    e = SyncEngine(DirBackend(cloud), modules(store_e), tmp_path / "e")
+    d.sync_once()  # first device: uploads what it has; `extra` is all defaults, so it is left out
+    assert "extra" not in cloud_profile(cloud)["modules"]
+    e.sync_once()
+    store_e["extra.a"] = "customised"
+    assert e.sync_once() == "pushed"
+    assert d.sync_once() == "pulled" and store_d["extra.a"] == "customised"

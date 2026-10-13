@@ -48,6 +48,9 @@ class AppearanceModule(GSettingsModule):
         Group("shell_theme", "Shell theme", "GNOME Shell theme (User Themes extension)", {USER_THEME: ("name",)}),
     )
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        return super().is_default(item_id, data) and "theme" not in data
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         data = super().capture_item(item_id, assets_dir)
         if item_id in THEME_ITEMS:

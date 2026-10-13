@@ -593,6 +593,68 @@ def test_multitasking_roundtrip_and_items_are_independent(assets_dir):
     assert wm.get_int("num-workspaces") == 9  # that row is switched off here
 
 
+# -- "nothing customised" is recognised, so a fresh install's defaults are never shared --------------
+
+def test_a_clean_system_is_all_defaults_for_every_gsettings_item(assets_dir, monkeypatch):
+    from asinux_sync.modules.gsettings_module import GSettingsModule
+
+    hardware(monkeypatch, touchpad=True, stick=True)
+    not_default = []
+    for module_id, cls in REGISTRY.items():
+        if not issubclass(cls, GSettingsModule) or module_id in ("notifications", "extensions"):
+            continue
+        module = cls()
+        for item in module.list_items():
+            data = module.capture_item(item.id, assets_dir)
+            if data is not None and not module.is_default(item.id, data):
+                not_default.append(f"{module_id}.{item.id}")
+    assert not_default == []
+
+
+def test_setting_anything_makes_an_item_not_default(assets_dir):
+    gs("org.gnome.desktop.wm.preferences").set_string("focus-mode", "sloppy")
+    module = WindowModule()
+    focus = module.capture_item("focus", assets_dir)
+    assert module.is_default("focus", focus) is False
+    assert module.is_default("titlebar_buttons", module.capture_item("titlebar_buttons", assets_dir)) is True
+
+
+def test_a_custom_theme_makes_the_item_not_default(assets_dir, isolated_home):
+    theme = isolated_home / ".local/share/icons/MyIcons"
+    theme.mkdir(parents=True)
+    (theme / "index.theme").write_text("[Icon Theme]\n")
+    module = AppearanceModule()
+    assert module.is_default("icon_theme", module.capture_item("icon_theme", assets_dir)) is True
+    gs("org.gnome.desktop.interface").set_string("icon-theme", "MyIcons")
+    assert module.is_default("icon_theme", module.capture_item("icon_theme", assets_dir)) is False
+
+
+def test_the_wallpaper_is_default_until_the_user_sets_one(assets_dir):
+    module = BackgroundModule()
+    # The values are the effective ones (the installer's wallpaper), but nobody chose them.
+    assert module.is_default("desktop", module.capture_item("desktop", assets_dir)) is True
+    gs(background.BACKGROUND_SCHEMA).set_string("picture-options", "zoom")
+    assert module.is_default("desktop", module.capture_item("desktop", assets_dir)) is False
+    assert module.is_default("lockscreen", module.capture_item("lockscreen", assets_dir)) is True
+
+
+def test_other_modules_recognise_their_empty_state(assets_dir, isolated_home, monkeypatch):
+    assert ShortcutsModule().is_default("custom", {"custom": []}) is True
+    assert ShortcutsModule().is_default("custom", {"custom": [{"path": "p", "values": {}}]}) is False
+    assert KeyboardModule().is_default("compose_key", {"options": []}) is True
+    assert KeyboardModule().is_default("compose_key", {"options": ["compose:ralt"]}) is False
+    assert AppGridModule().is_default("folders", {"children": {}, "folders": {"System": {}}}) is True
+    assert AppGridModule().is_default("folders", {"children": {}, "folders": {"Mine": {"name": "'x'"}}}) is False
+    assert NotificationsModule().is_default("app:org-x", {"application_id": "x.desktop", "values": {}}) is True
+    assert NotificationsModule().is_default("app:org-x", {"application_id": "x.desktop", "values": {"enable": "false"}}) is False
+    assert RegionModule().is_default("formats", {"region": ""}) is True
+    assert RegionModule().is_default("formats", {"region": "pl_PL.UTF-8"}) is False
+    assert RegionModule().is_default("language", {"language": "en_US.UTF-8"}) is False  # can't tell: always shared
+    assert ProfilePictureModule().is_default("all", {"icon": None}) is True
+    assert DefaultAppsModule().is_default("all", {"mimeapps": None}) is True
+    assert DefaultAppsModule().is_default("all", {"mimeapps": "[Default Applications]\n"}) is False
+
+
 # -- every GSettings key an item names must exist ---------------------------------------------------
 
 def test_every_gsettings_key_named_by_a_module_exists():

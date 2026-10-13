@@ -26,6 +26,11 @@ class AppGridModule(GSettingsModule):
     def list_items(self) -> list[Item]:
         return super().list_items() + [Item(FOLDERS_ITEM, "App folders", "The folders on the app grid and what is in them")]
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        if item_id == FOLDERS_ITEM:
+            return not data.get("children") and not any(data.get("folders", {}).values())
+        return super().is_default(item_id, data)
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         if item_id != FOLDERS_ITEM:
             return super().capture_item(item_id, assets_dir)

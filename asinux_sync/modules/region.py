@@ -47,6 +47,9 @@ class RegionModule(SyncModule):
             Item("formats", "Formats", "Numbers, dates and currencies"),
         ]
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        return item_id == "formats" and not data.get("region")
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         if item_id == "formats":
             return {"region": gsettings_util.get_string(LOCALE, "region")}

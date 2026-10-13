@@ -78,6 +78,11 @@ class NotificationsModule(GSettingsModule):
         apps.sort(key=lambda item: item.name.lower())
         return super().list_items() + apps
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        if item_id.startswith(APP):
+            return not data.get("values")
+        return super().is_default(item_id, data)
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         if not item_id.startswith(APP):
             return super().capture_item(item_id, assets_dir)

@@ -50,6 +50,11 @@ class KeyboardModule(GSettingsModule):
                  by_id["key_repeat"], by_id["emacs_input"], by_id["overview_key"]]
         return order
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        if item_id in XKB_ITEMS:
+            return not data.get("options")
+        return super().is_default(item_id, data)
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         if item_id not in XKB_ITEMS:
             return super().capture_item(item_id, assets_dir)

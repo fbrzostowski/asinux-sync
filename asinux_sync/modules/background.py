@@ -80,6 +80,13 @@ class BackgroundModule(SyncModule):
 
     # -- capture ----------------------------------------------------------
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        if item_id in PICTURES:
+            return not data.get("customised", True)
+        if item_id == "live_wallpaper":
+            return not any(data.get("values", {}).values()) and not data.get("video")
+        return False
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         if item_id in PICTURES:
             return self._capture_picture(*PICTURES[item_id], assets_dir)
@@ -97,6 +104,9 @@ class BackgroundModule(SyncModule):
     def _capture_picture(self, schema_id: str, keys: tuple[str, ...], assets_dir: Path) -> dict:
         data: dict = {
             "values": {k: gsettings_util.get_string(schema_id, k) for k in keys},
+            # The values above are effective ones (defaults included); this says
+            # whether the user ever set any of them.
+            "customised": bool(gsettings_util.capture_keys(schema_id, keys)),
             "assets": {},
             "bundles": {},
         }

@@ -75,6 +75,16 @@ class SyncModule(ABC):
         with a missing asset (log and skip) - the other machine may have had
         something this one doesn't."""
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        """Does `data` say "nothing here was ever customised"?
+
+        Such an item carries no information worth sharing, so the engine never
+        uploads it for the first time: a freshly installed machine reports its
+        installer defaults for everything, and must not turn those into the
+        profile other machines then apply. (Once an item has been synced, a
+        return to defaults is a real change and is uploaded.)"""
+        return False
+
     def merge_item(self, item_id: str, remote: dict, local: dict) -> dict:
         """What to upload for an item both the cloud and this device have.
         Normally this device's data replaces the cloud's; a module whose item

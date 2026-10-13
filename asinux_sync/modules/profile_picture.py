@@ -35,6 +35,9 @@ class ProfilePictureModule(SyncModule):
     description = "Your account picture on the login screen and in the system menu"
     category = "System"
 
+    def is_default(self, item_id: str, data: dict) -> bool:
+        return not data.get("icon")
+
     def capture_item(self, item_id: str, assets_dir: Path) -> dict | None:
         icon = _current_icon(_user_proxy())
         return {"icon": assets.store_file(self.module_id, icon, assets_dir) if icon else None}

@@ -94,7 +94,11 @@ class SyncEngine:
         - never synced here, cloud has it  -> apply it (the cloud wins: a new
           device, or a category just switched on, must not overwrite what
           other devices share)
-        - never synced here, cloud lacks it -> upload it
+        - never synced here, cloud lacks it -> upload it, unless there is
+          nothing to share: this is the device's first sync (a new
+          installation, whose values are installer defaults) or the item is
+          still entirely at its defaults. Those are only remembered, so
+          that what is changed later is uploaded.
         - changed here (whatever the cloud did) -> upload it. A change made
           on this computer is never overwritten by the cloud's older value;
           if both sides changed the same item, this device wins, since
@@ -124,8 +128,13 @@ class SyncEngine:
             # against: everything here counts as never synced, so all of it goes up.
             known = (state or {}).get("items", {}) if remote is not None else {}
 
+            # A device that has never synced is a new installation: what it has
+            # now are its installer defaults, not choices to share.
+            first_sync = remote is not None and state is None
+
             to_push: dict[str, dict] = {}
             to_apply: dict[str, dict] = {}
+            baseline: dict[str, dict] = {}
             for key in sorted(set(local_items) | {k for k in cloud_items if self._is_enabled(k, disabled)}):
                 here = _digest(local_items[key]) if key in local_items else None
                 cloud = _digest(cloud_items[key]) if key in cloud_items else None
@@ -134,13 +143,19 @@ class SyncEngine:
                     if cloud is not None:
                         to_apply[key] = cloud_items[key]
                     elif here is not None:
-                        to_push[key] = local_items[key]
+                        module_id, _, item_id = key.partition(".")
+                        if first_sync or self.modules[module_id].is_default(item_id, local_items[key]):
+                            # Nothing to share yet: remember how it looks now, so
+                            # that only what changes later is uploaded.
+                            baseline[key] = {"local": here, "cloud": None}
+                        else:
+                            to_push[key] = local_items[key]
                 elif here is not None and here != seen["local"]:
                     to_push[key] = local_items[key]
                 elif cloud is not None and cloud != seen["cloud"]:
                     to_apply[key] = cloud_items[key]
 
-            new_items = dict(known)
+            new_items = {**known, **baseline}
             profile = remote
             if to_apply:
                 self._apply_items(to_apply, disabled)
