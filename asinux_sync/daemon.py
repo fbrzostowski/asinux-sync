@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from . import config as config_module
-from . import device_requests, missing_extensions, theme_requests, wallpaper_requests
+from . import device_requests, missing_extensions, shell_setup, theme_requests, wallpaper_requests
 from . import registry as registry_module
 from .cloud.rclone import RcloneBackend, RcloneError, is_installed
 from .engine import SyncEngine
@@ -33,44 +33,53 @@ PROMPT_COOLDOWN_SECONDS = 3600
 REPO_DIR = Path(__file__).resolve().parent.parent
 
 
-def _launch_prompt(request_path: Path, result_path: Path) -> subprocess.Popen:
-    return subprocess.Popen(
-        [sys.executable, "-m", "asinux_sync_settings.extension_prompt", str(request_path), str(result_path)],
-        cwd=REPO_DIR,
-    )
+def _launcher(module: str):
+    def launch(request_path: Path, result_path: Path) -> subprocess.Popen:
+        return subprocess.Popen(
+            [sys.executable, "-m", module, str(request_path), str(result_path)], cwd=REPO_DIR)
+    return launch
 
 
-class ExtensionPrompter:
-    """Asks, in a window of its own, about extensions the cloud has turned on
-    but this computer lacks. The service never waits for the answer: the
-    window runs as a separate process and is checked on later cycles."""
+_launch_prompt = _launcher("asinux_sync_settings.extension_prompt")
 
-    def __init__(self, launch=_launch_prompt, installed=shell_extensions.installed, clock=time.monotonic):
+
+class WindowPrompter:
+    """Asks something in a window of its own. The service never waits for
+    the answer: the window runs as a separate process (python -m <module>
+    REQUEST RESULT) and is checked on later cycles. A window closed without
+    an answer is asked again after PROMPT_COOLDOWN_SECONDS."""
+
+    folder = "prompt"
+    what = "prompt"
+
+    def __init__(self, launch, clock=time.monotonic):
         self.launch = launch
-        self.installed = installed
         self.clock = clock
         self.process: subprocess.Popen | None = None
         self.not_before = 0.0
 
-    @staticmethod
-    def _paths() -> tuple[Path, Path]:
-        folder = config_module.STATE_DIR / "prompt"
+    def _paths(self) -> tuple[Path, Path]:
+        folder = config_module.STATE_DIR / self.folder
         folder.mkdir(parents=True, exist_ok=True)
         return folder / "request.json", folder / "result.json"
+
+    def request(self, cfg, engine, backend) -> dict | None:
+        """What to ask now, or None."""
+        raise NotImplementedError
+
+    def answered(self, cfg, engine, answer: dict) -> None:
+        raise NotImplementedError
 
     def check(self, cfg: config_module.Config, engine: SyncEngine, backend: RcloneBackend) -> None:
         self._collect(cfg, engine)
         if self.process is not None or self.clock() < self.not_before:
             return
-        missing = missing_extensions.find_missing(
-            engine.last_remote, cfg.disabled_modules, cfg.declined_extensions, self.installed())
-        if not missing:
+        question = self.request(cfg, engine, backend)
+        if not question:
             return
-        names = missing_extensions.names_from_devices(registry_module.Registry(backend).list_devices())
         request, result = self._paths()
         result.unlink(missing_ok=True)
-        request.write_text(json.dumps({"extensions": [{"uuid": u, "name": names.get(u, u)} for u in missing]}))
-        logger.info("asking about missing extensions: %s", ", ".join(missing))
+        request.write_text(json.dumps(question))
         self.process = self.launch(request, result)
 
     def _collect(self, cfg: config_module.Config, engine: SyncEngine) -> None:
@@ -82,10 +91,33 @@ class ExtensionPrompter:
         if not result.exists():
             # Closed without choosing (or no display): ask again, but not at once.
             self.not_before = self.clock() + PROMPT_COOLDOWN_SECONDS
-            logger.info("extension prompt ended without an answer (exit %s)", returncode)
+            logger.info("%s ended without an answer (exit %s)", self.what, returncode)
             return
         answer = json.loads(result.read_text())
         result.unlink(missing_ok=True)
+        self.answered(cfg, engine, answer)
+
+
+class ExtensionPrompter(WindowPrompter):
+    """Asks about extensions the cloud has turned on but this computer lacks."""
+
+    folder = "prompt"
+    what = "extension prompt"
+
+    def __init__(self, launch=_launch_prompt, installed=shell_extensions.installed, clock=time.monotonic):
+        super().__init__(launch, clock)
+        self.installed = installed
+
+    def request(self, cfg, engine, backend) -> dict | None:
+        missing = missing_extensions.find_missing(
+            engine.last_remote, cfg.disabled_modules, cfg.declined_extensions, self.installed())
+        if not missing:
+            return None
+        names = missing_extensions.names_from_devices(registry_module.Registry(backend).list_devices())
+        logger.info("asking about missing extensions: %s", ", ".join(missing))
+        return {"extensions": [{"uuid": u, "name": names.get(u, u)} for u in missing]}
+
+    def answered(self, cfg, engine, answer: dict) -> None:
         cfg.declined_extensions = sorted({*cfg.declined_extensions, *answer.get("declined", [])})
         config_module.save(cfg)
         for uuid, reason in answer.get("failed", {}).items():
@@ -99,7 +131,35 @@ class ExtensionPrompter:
                 + ["layout.all", "appearance.shell_theme"])
 
 
+class ShellPrompter(WindowPrompter):
+    """Asks before switching the login shell or installing Tide or Powerline
+    (they need the administrator password or a download; see shell_setup.py)."""
+
+    folder = "prompt-shell"
+    what = "shell prompt"
+
+    def __init__(self, launch=_launcher("asinux_sync_settings.shell_prompt"), clock=time.monotonic):
+        super().__init__(launch, clock)
+
+    def request(self, cfg, engine, backend) -> dict | None:
+        steps = shell_setup.find_needed(engine.last_remote, cfg.disabled_modules, cfg.declined_shell_setup)
+        if not steps:
+            return None
+        logger.info("asking about shell setup: %s", ", ".join(s["id"] for s in steps))
+        return {"steps": steps}
+
+    def answered(self, cfg, engine, answer: dict) -> None:
+        cfg.declined_shell_setup = sorted({*cfg.declined_shell_setup, *answer.get("declined", [])})
+        config_module.save(cfg)
+        for step_id, reason in answer.get("failed", {}).items():
+            logger.warning("shell setup %s failed: %s", step_id, reason)
+        if answer.get("done"):
+            # Held back until now (Tide's settings, Powerline in ~/.zshrc): apply next cycle.
+            engine.forget_items(["shell.default_shell", "shell.tide", "shell.powerline"])
+
+
 _prompter = ExtensionPrompter()
+_shell_prompter = ShellPrompter()
 # Every kind of thing devices can ask each other for (see device_requests.py).
 _requests = device_requests.RequestBoard([theme_requests.ThemeHandler(), wallpaper_requests.WallpaperHandler()])
 
@@ -124,6 +184,7 @@ def tick(cfg: config_module.Config) -> str:
     engine = SyncEngine(backend, modules, config_module.STATE_DIR)
     result = engine.sync_once(cfg.disabled_modules)
     _prompter.check(cfg, engine, backend)
+    _shell_prompter.check(cfg, engine, backend)
     try:
         _requests.check(cfg, engine, backend, registry)
     except (RcloneError, OSError, ValueError, tarfile.TarError) as exc:

@@ -19,6 +19,7 @@ from .power import PowerModule
 from .profile_picture import ProfilePictureModule
 from .region import RegionModule
 from .search import SearchModule
+from .shell import ShellModule
 from .shortcuts import ShortcutsModule
 from .window import WindowModule
 
@@ -41,6 +42,7 @@ REGISTRY: dict[str, type[SyncModule]] = {
         ShortcutsModule,
         MouseModule,
         DefaultAppsModule,
+        ShellModule,
         NotificationsModule,
         SearchModule,
         RegionModule,

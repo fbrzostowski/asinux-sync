@@ -33,6 +33,9 @@ class Config:
     # installed): never asked about again here. Local on purpose - another
     # computer may well want them.
     declined_extensions: list[str] = field(default_factory=list)
+    # Shell setup steps declined here ("shell:fish", "tide", "powerline" - see
+    # shell_setup.py), likewise never asked about again on this computer.
+    declined_shell_setup: list[str] = field(default_factory=list)
     background_sync: bool = True
     sync_interval_seconds: int = 60
 

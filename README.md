@@ -103,6 +103,7 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 | `keyboard` | źródła wejścia, przełączanie per okno, klawisz znaków alternatywnych, klawisz Compose, pozostałe opcje układu, powtarzanie klawiszy, wejście Emacs, klawisz przeglądu. Układ wybrany przy zakładaniu profilu jest wartością domyślną: staje się układem pierwszego urządzenia, a na kolejnych urządzeniach uzupełnia chmurę, jeśli nikt jeszcze nie zsynchronizował klawiatury |
 | `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
 | `mouse` | panel Mysz i touchpad: przycisk główny, prędkość i przyspieszenie myszy, kierunek przewijania, wklejanie środkowym przyciskiem; touchpad (włączony, wyłączanie podczas pisania, prędkość, kliknięcie dodatkowe, tapnięcie, metoda i kierunek przewijania) i pointing stick — te dwa tylko na komputerach z takim sprzętem |
+| `shell` | domyślna powłoka (sh, bash, zsh, fish; jak panel Default Shell w ASC), prompt Tide dla fish (czy jest zainstalowany + wszystkie zmienne `tide_*`), prompt Powerline dla zsh (czy `~/.zshrc` go ładuje). Zmiana powłoki i instalacja pakietów wymagają hasła, a Tide jest pobierany z GitHuba, więc usługa najpierw pyta w oknie (patrz niżej) |
 | `default_apps` | `~/.config/mimeapps.list` |
 | `search` | wyszukiwanie: aplikacje jako źródła wyników, ich kolejność i lokalizacje przeszukiwania plików |
 | `notifications` | panel Powiadomień: Nie przeszkadzać, powiadomienia na ekranie blokady oraz — osobny element dla każdej aplikacji — jej sześć przełączników (powiadomienia, dźwięk, banery, treść banerów, ekran blokady, treść na blokadzie) |
@@ -138,6 +139,21 @@ w `config.json`) i więcej o nie nie pyta. Zamknięcie okna bez wyboru to „zap
 (najwcześniej za godzinę). Rozszerzenie niedostępne na extensions.gnome.org też trafia na listę
 odmów. Po instalacji jego ustawienia z chmury stosują się w następnym cyklu. Żeby znów być
 pytanym: `python3 -m asinux_sync.cli reset-extension-prompts`.
+
+Z powłoką jest podobnie. Jeśli inne komputery mają inną domyślną powłokę, Tide albo Powerline,
+a ten nie, usługa otwiera okno „Shell setup from your other computers” z listą kroków:
+- zmiana domyślnej powłoki (najpierw instaluje ją, jeśli trzeba),
+- instalacja Tide przez Fisher (i fish, jeśli go nie ma),
+- instalacja pakietu `powerline` (i zsh, jeśli go nie ma).
+
+Wszystko, co wymaga roota, idzie jednym wywołaniem `pkexec`, czyli jedną prośbą o hasło
+(`dnf install`, potem `usermod -s`). Instalowane są wyłącznie pakiety sh, bash, zsh, fish
+i powerline. Odmowa jest zapamiętywana na tym komputerze (`declined_shell_setup` w
+`config.json`), a `reset-extension-prompts` czyści ją razem z odmowami rozszerzeń. Bez pytania
+usługa robi tylko to, co nic nie instaluje: ustawia zmienne Tide, gdy Tide już jest, i
+dopisuje do `~/.zshrc` blok ładujący Powerline (oznaczony `# >>> asinux-sync: powerline >>>`),
+gdy pakiet już jest. Wyłączenie Powerline w chmurze usuwa tylko ten blok, nigdy własne linie
+użytkownika.
 
 ### Prośby między urządzeniami
 

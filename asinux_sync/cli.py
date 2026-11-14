@@ -107,8 +107,9 @@ def cmd_service(args: argparse.Namespace) -> int:
 
 def cmd_reset_extension_prompts(args: argparse.Namespace) -> int:
     cfg = config_module.load()
-    forgotten = cfg.declined_extensions
+    forgotten = cfg.declined_extensions + cfg.declined_shell_setup
     cfg.declined_extensions = []
+    cfg.declined_shell_setup = []
     config_module.save(cfg)
     print(f"Will ask again about: {', '.join(forgotten) if forgotten else '(nothing was declined)'}")
     return 0
@@ -198,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     service_p.set_defaults(func=cmd_service)
 
     reset_p = sub.add_parser(
-        "reset-extension-prompts", help="forget the missing extensions you declined, so you are asked about them again")
+        "reset-extension-prompts", help="forget the missing extensions and shell setup you declined, so you are asked about them again")
     reset_p.set_defaults(func=cmd_reset_extension_prompts)
 
     devices_p = sub.add_parser("devices", help="list the devices on your account")
