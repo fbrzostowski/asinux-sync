@@ -1333,3 +1333,20 @@ def test_shell_theme_is_found_in_an_extension_installed_in_home(assets_dir, isol
     gsettings_util.apply_keys("org.gnome.shell.extensions.user-theme-test", ("name",), {"name": "'MyShell'"})
     assert gsettings_util.capture_keys("org.gnome.shell.extensions.user-theme-test", ("name",)) == {"name": "'MyShell'"}
     assert gsettings_util.schema("org.gnome.shell.extensions.not-installed") is None
+
+
+def test_config_files_custom_menu(assets_dir, isolated_home):
+    from asinux_sync.modules.config_files import ConfigFilesModule
+
+    path = isolated_home / ".config/custom-menu.json"
+    module = ConfigFilesModule()
+    assert module.capture_item("custom_menu", assets_dir) == {"text": None}  # not set here
+    assert module.is_default("custom_menu", {"text": None})
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"menus": [{"title": "Apps"}]}')
+    roundtrip(module, assets_dir, lambda: path.write_text("{}"))
+    assert path.read_text() == '{"menus": [{"title": "Apps"}]}'
+
+    module.apply_item("custom_menu", {"text": None}, assets_dir)  # the other computer has none
+    assert path.exists()

@@ -98,6 +98,7 @@ W panelu każde urządzenie ma własne przełączniki, pogrupowane tak samo.
 | `dock` | aplikacje przypięte do docka/launchera (`favorite-apps`) |
 | `app_grid` | kolejność aplikacji na siatce i foldery aplikacji |
 | `extensions` | rozszerzenia GNOME Shell — dla każdego menu: „Extension and prefs” (stan + ustawienia), „Only extension” (tylko stan), „Off” |
+| `config_files` | całe pliki konfiguracyjne aplikacji i rozszerzeń spoza GSettings, każdy osobno: `~/.config/custom-menu.json` (rozszerzenie Custom Menu). Kolejny plik to jedna linijka w `FILES` w `modules/config_files.py`. Plik, którego na danym komputerze nie ma, nie jest wysyłany jako pusty ani usuwany na pozostałych |
 | `layout` | ustawienia rozszerzeń (dock, panel, menu, efekty) — jeden przełącznik, bez rozwijania; całkowicie niezależne od `extensions` i od asinux-layouts. Ścieżki dconf są czytane ze schematów każdego rozszerzenia (nie zgadywane z nazwy), a zapis jest ograniczony do folderów, które rozszerzenie samo deklaruje |
 | `keyboard` | źródła wejścia, przełączanie per okno, klawisz znaków alternatywnych, klawisz Compose, pozostałe opcje układu, powtarzanie klawiszy, wejście Emacs, klawisz przeglądu. Układ wybrany przy zakładaniu profilu jest wartością domyślną: staje się układem pierwszego urządzenia, a na kolejnych urządzeniach uzupełnia chmurę, jeśli nikt jeszcze nie zsynchronizował klawiatury |
 | `shortcuts` | skróty okien, shella, kompozytora, klawisze multimediów/systemowe, własne skróty |
@@ -183,6 +184,18 @@ Ikony i kursory, które dziedziczą po innych (`Inherits=` w `index.theme`), doc
 przodków tak samo. Pobrany motyw dostaje znacznik `.asinux-sync-transfer`, żeby nie był potem
 wysyłany do chmury jako „własny” motyw użytkownika. Folder większy niż 1 GB nie jest wysyłany
 (`failed`).
+
+#### Rodzaj `wallpaper`: brakujące tapety systemowe
+
+Tapeta z katalogu domowego jedzie z profilem. Tapeta systemowa (`/usr/share/backgrounds/...`)
+jest tylko wskazywana. Gdy komputer jej nie ma (tapeta pulpitu, jasna i ciemna, albo ekranu
+blokady), zostaje przy swojej i prosi o nią (`{"path": "/usr/share/backgrounds/..."}`). Inne
+urządzenie wysyła plik, a tapetę dynamiczną (`.xml`) razem ze wszystkimi obrazami, które XML
+wskazuje. Ponieważ do `/usr` nie da się pisać, kopia trafia do
+`~/.local/share/asinux-sync/assets/system/<ścieżka systemowa>`, a XML jest przepisywany na te
+kopie. Ustawienie wskazuje kopię, ale przy synchronizacji jest zgłaszane jako ścieżka systemowa,
+więc kopia nie wygląda na zmianę tapety i nic nie wraca do chmury. Komputer, który sam pobrał
+tapetę, może ją przekazać dalej.
 
 Testy modułów używają backendu pamięciowego GSettings, więc nigdy nie zmieniają prawdziwych ustawień.
 

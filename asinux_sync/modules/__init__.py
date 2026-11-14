@@ -3,6 +3,7 @@ from .app_grid import AppGridModule
 from .appearance import AppearanceModule
 from .background import BackgroundModule
 from .base import Item, ModuleUnavailable, SyncModule
+from .config_files import ConfigFilesModule
 from .datetime_settings import DateTimeModule
 from .default_apps import DefaultAppsModule
 from .dock import DockModule
@@ -35,6 +36,7 @@ REGISTRY: dict[str, type[SyncModule]] = {
         AppGridModule,
         ExtensionsModule,
         LayoutModule,
+        ConfigFilesModule,
         KeyboardModule,
         ShortcutsModule,
         MouseModule,

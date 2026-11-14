@@ -5,7 +5,11 @@ wallpaper (settings + video) and Damask's settings.
 Same schemas as /opt/asinux-system-configuration/background_settings.py,
 kept in step deliberately so a wallpaper set through that panel round-trips
 through this module unchanged. Files that ship with the distribution
-(/usr/...) are referenced, not uploaded - every ASinux machine has them.
+(/usr/...) are referenced, not uploaded - most ASinux machines have them. One
+that doesn't is asked for from another device (wallpaper_requests.py) and
+kept under fetched_root(), mirroring its system path; the settings then point
+there, and capture reports the system path, so the copy is never mistaken
+for a change of wallpaper.
 """
 
 from __future__ import annotations
@@ -47,6 +51,48 @@ def _uri_to_path(uri: str) -> Path | None:
     if parsed.scheme not in ("file", ""):
         return None  # not a local file (e.g. a resource:// built-in)
     return Path(unquote(parsed.path))
+
+
+def fetched_root() -> Path:
+    """Where system wallpapers fetched from another device are kept."""
+    return assets.assets_home() / "system"
+
+
+def mirror(path: Path) -> Path:
+    """Where a fetched copy of system file `path` lives here."""
+    return fetched_root() / Path(path).relative_to("/")
+
+
+def unmirror(path: Path) -> Path:
+    """The system path a fetched copy stands for (other paths unchanged)."""
+    try:
+        return Path("/") / Path(path).relative_to(fetched_root())
+    except ValueError:
+        return Path(path)
+
+
+def _unmirror_uri(uri: str) -> str:
+    path = _uri_to_path(uri)
+    if path is None:
+        return uri
+    original = unmirror(path)
+    return original.as_uri() if original != path else uri
+
+
+def missing_system_files(data: dict | None) -> list[Path]:
+    """System files a cloud picture item points at that this computer has
+    neither itself nor fetched."""
+    if not data:
+        return []
+    found = []
+    for key, value in data.get("values", {}).items():
+        if not key.endswith("uri") or key in data.get("assets", {}) or key in data.get("bundles", {}):
+            continue
+        path = _uri_to_path(value)
+        if path is not None and path.is_absolute() and assets.is_system_path(path) \
+                and not path.exists() and not mirror(path).exists() and path not in found:
+            found.append(path)
+    return found
 
 
 def _hanabi_keys() -> tuple[str, ...]:
@@ -103,7 +149,11 @@ class BackgroundModule(SyncModule):
 
     def _capture_picture(self, schema_id: str, keys: tuple[str, ...], assets_dir: Path) -> dict:
         data: dict = {
-            "values": {k: gsettings_util.get_string(schema_id, k) for k in keys},
+            "values": {
+                k: _unmirror_uri(gsettings_util.get_string(schema_id, k)) if k.endswith("uri")
+                else gsettings_util.get_string(schema_id, k)
+                for k in keys
+            },
             # The values above are effective ones (defaults included); this says
             # whether the user ever set any of them.
             "customised": bool(gsettings_util.capture_keys(schema_id, keys)),
@@ -175,8 +225,12 @@ class BackgroundModule(SyncModule):
                 else:
                     path = _uri_to_path(value)
                     if path is not None and not path.exists():
-                        logger.warning("background: %s is missing here, leaving %s alone", path, key)
-                        continue
+                        if path.is_absolute() and mirror(path).exists():
+                            value = mirror(path).as_uri()  # fetched from another device
+                        else:
+                            # wallpaper_requests.py asks another device for it.
+                            logger.info("background: %s is missing here, leaving %s alone", path, key)
+                            continue
             # Only the keys this profile carries: nothing here is reset to default.
             gsettings_util.apply_keys(schema_id, (key,), {key: GLib.Variant("s", value).print_(False)})
 

@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from . import config as config_module
-from . import device_requests, missing_extensions, theme_requests
+from . import device_requests, missing_extensions, theme_requests, wallpaper_requests
 from . import registry as registry_module
 from .cloud.rclone import RcloneBackend, RcloneError, is_installed
 from .engine import SyncEngine
@@ -101,7 +101,7 @@ class ExtensionPrompter:
 
 _prompter = ExtensionPrompter()
 # Every kind of thing devices can ask each other for (see device_requests.py).
-_requests = device_requests.RequestBoard([theme_requests.ThemeHandler()])
+_requests = device_requests.RequestBoard([theme_requests.ThemeHandler(), wallpaper_requests.WallpaperHandler()])
 
 
 def tick(cfg: config_module.Config) -> str:
