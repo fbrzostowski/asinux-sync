@@ -203,6 +203,15 @@ PY
     fi
 }
 
+# A running service keeps the old code in memory until restarted. Only touch
+# it if it is already set up; on a new machine the Asinux Sync panel installs it.
+restart_service() {
+    command -v systemctl >/dev/null 2>&1 || return 0
+    systemctl --user is-active --quiet asinux-sync.service 2>/dev/null || return 0
+    log "Restarting the background service so it runs the updated code"
+    run systemctl --user restart asinux-sync.service || warn "could not restart asinux-sync.service"
+}
+
 next_steps() {
     cat <<EOF
 
@@ -234,6 +243,7 @@ main() {
         link_launchers
     fi
     verify
+    restart_service
     next_steps
 }
 
