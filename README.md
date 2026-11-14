@@ -28,10 +28,14 @@ curl -fsSL https://raw.githubusercontent.com/fbrzostowski/asinux-sync/master/set
 
 # albo z klona, kopiując dokładny stan ASC z innego komputera (także niewypchnięte panele)
 ./setup.sh --asc-from uzytkownik@inny-pc:/opt/asinux-system-configuration/
+
+# to samo dla Asinux Sync (niezacommitowane/niewypchnięte zmiany z innego komputera)
+./setup.sh --sync-from uzytkownik@inny-pc:/opt/asinux-sync/ \
+           --asc-from uzytkownik@inny-pc:/opt/asinux-system-configuration/
 ```
 
 Skrypt jest idempotentny (ponowne uruchomienie aktualizuje) i ma `--dry-run`, `--no-packages`,
-`--no-asc`, `--sync-repo`, `--prefix`. Niczego nie nadpisuje bez pytania: katalog docelowy, który nie
+`--no-asc`, `--sync-from`, `--sync-repo`, `--prefix`. Niczego nie nadpisuje bez pytania: katalog docelowy, który nie
 jest checkoutem gita i nie jest pusty, kończy się błędem, a `rsync` działa bez `--delete`.
 
 ## Użycie
@@ -115,7 +119,14 @@ Zsynchronizowane są tylko wartości ustawione przez użytkownika; klucz zostawi
 jednym urządzeniu jest resetowany na pozostałych. Nazwa użytkownika nie jest modułem — powstaje
 raz, przy pierwszej konfiguracji (`account.json`). Nie synchronizujemy ustawień specyficznych
 dla sprzętu (monitory, hasła Wi-Fi, opcje GPU Hanabi). Rozszerzenia GNOME Shell, których
-brakuje na danym komputerze, nie są instalowane automatycznie — są pomijane.
+brakuje na danym komputerze, nie są instalowane po cichu: usługa otwiera okno z listą rozszerzeń
+włączonych w chmurze, a niezainstalowanych tutaj. „Install selected” instaluje zaznaczone przez
+GNOME Shell z extensions.gnome.org (Shell sam prosi o potwierdzenie każdego), „No thanks” albo
+odznaczenie rozszerzenia zapamiętuje odmowę **na tym komputerze** (`declined_extensions`
+w `config.json`) i więcej o nie nie pyta. Zamknięcie okna bez wyboru to „zapytaj później”
+(najwcześniej za godzinę). Rozszerzenie niedostępne na extensions.gnome.org też trafia na listę
+odmów. Po instalacji jego ustawienia z chmury stosują się w następnym cyklu. Żeby znów być
+pytanym: `python3 -m asinux_sync.cli reset-extension-prompts`.
 
 Testy modułów używają backendu pamięciowego GSettings, więc nigdy nie zmieniają prawdziwych ustawień.
 

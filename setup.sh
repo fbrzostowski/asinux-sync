@@ -4,6 +4,7 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/fbrzostowski/asinux-sync/master/setup.sh | bash
 #   ./setup.sh --asc-from you@other-pc:/opt/asinux-system-configuration/
+#   ./setup.sh --sync-from you@other-pc:/opt/asinux-sync/ --asc-from you@other-pc:/opt/asinux-system-configuration/
 #
 # Run `./setup.sh --help` for the options.
 set -euo pipefail
@@ -12,6 +13,7 @@ SYNC_REPO="https://github.com/fbrzostowski/asinux-sync"
 ASC_REPO="https://github.com/fbrzostowski/asinux-system-configuration"
 PREFIX="/opt"
 ASC_FROM=""
+SYNC_FROM=""
 INSTALL_PACKAGES=1
 SETUP_ASC=1
 DRY_RUN=0
@@ -27,7 +29,11 @@ Usage: setup.sh [options]
                      - an rsync source, e.g. you@other-pc:/opt/asinux-system-configuration/
                        or a local folder. Use this to copy the exact state of
                        a machine whose ASC has changes that are not on GitHub.
-  --sync-repo URL  git URL of Asinux Sync (default: $SYNC_REPO)
+  --sync-from SRC  where to get Asinux Sync from, like --asc-from: a git URL
+                   (default: $SYNC_REPO) or an rsync source such as
+                   you@other-pc:/opt/asinux-sync/ - use that to bring over
+                   changes not yet pushed to GitHub.
+  --sync-repo URL  same as --sync-from with a git URL
   --prefix DIR     install under DIR (default: /opt). The ASC launchers refer
                    to /opt, so anything else is only useful for testing.
   --no-packages    do not install distribution packages
@@ -40,6 +46,7 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         --asc-from)    ASC_FROM="${2:?--asc-from needs a value}"; shift 2 ;;
+        --sync-from)   SYNC_FROM="${2:?--sync-from needs a value}"; shift 2 ;;
         --sync-repo)   SYNC_REPO="${2:?--sync-repo needs a value}"; shift 2 ;;
         --prefix)      PREFIX="${2:?--prefix needs a value}"; shift 2 ;;
         --no-packages) INSTALL_PACKAGES=0; shift ;;
@@ -139,7 +146,11 @@ fetch_rsync() {
 setup_sync() {
     log "Asinux Sync"
     prepare_dir "$SYNC_DIR"
-    fetch_git "$SYNC_REPO" "$SYNC_DIR"
+    if [ -z "$SYNC_FROM" ] || is_git_url "$SYNC_FROM"; then
+        fetch_git "${SYNC_FROM:-$SYNC_REPO}" "$SYNC_DIR"
+    else
+        fetch_rsync "$SYNC_FROM" "$SYNC_DIR"
+    fi
 }
 
 setup_asc() {

@@ -74,6 +74,8 @@ class SyncEngine:
         self.staging_dir = state_dir / "staging"
         self.assets_dir = self.staging_dir / "assets"
         self.state_dir.mkdir(parents=True, exist_ok=True)
+        # The cloud profile as the last sync_once() saw it (None: nothing readable).
+        self.last_remote: dict | None = None
 
     @property
     def remote_path(self) -> str:
@@ -121,6 +123,7 @@ class SyncEngine:
                 if state is None:
                     return "idle"
                 remote = None
+            self.last_remote = remote
 
             local_items = _flat(self._capture(disabled))
             cloud_items = _flat(remote["modules"]) if remote else {}
@@ -170,6 +173,17 @@ class SyncEngine:
             if profile is not None:
                 self._save_state(profile, new_items)
             return "pushed" if to_push else "pulled" if to_apply else "idle"
+
+    def forget_items(self, keys: Collection[str]) -> None:
+        """Make the next cycle treat these items as never synced here, so the
+        cloud's value is applied to them (used after installing an extension
+        whose settings were skipped while it was missing)."""
+        with self._locked():
+            state = self._load_state()
+            if state is None:
+                return
+            state["items"] = {k: v for k, v in state.get("items", {}).items() if k not in set(keys)}
+            self._state_path().write_text(json.dumps(state))
 
     def cloud_has_item(self, key: str) -> bool:
         """Does the cloud profile already hold "module.item"?"""

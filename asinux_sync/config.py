@@ -29,6 +29,10 @@ class Config:
     # Modules that start switched off whose default has been applied to this
     # device already, so turning one on later isn't undone.
     defaults_applied: list[str] = field(default_factory=list)
+    # Extensions the user said no to on this computer (or that couldn't be
+    # installed): never asked about again here. Local on purpose - another
+    # computer may well want them.
+    declined_extensions: list[str] = field(default_factory=list)
     background_sync: bool = True
     sync_interval_seconds: int = 60
 

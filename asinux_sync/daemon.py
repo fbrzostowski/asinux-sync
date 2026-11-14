@@ -9,19 +9,94 @@ from __future__ import annotations
 import json
 import logging
 import signal
+import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 
 from . import config as config_module
+from . import missing_extensions
 from . import registry as registry_module
 from .cloud.rclone import RcloneBackend, RcloneError, is_installed
 from .engine import SyncEngine
-from .modules import REGISTRY
+from .modules import REGISTRY, shell_extensions
 
 logger = logging.getLogger("asinux-sync")
 
 STATUS_PATH = config_module.STATE_DIR / "status.json"
 POLL_SECONDS = 5
+
+
+PROMPT_COOLDOWN_SECONDS = 3600
+REPO_DIR = Path(__file__).resolve().parent.parent
+
+
+def _launch_prompt(request_path: Path, result_path: Path) -> subprocess.Popen:
+    return subprocess.Popen(
+        [sys.executable, "-m", "asinux_sync_settings.extension_prompt", str(request_path), str(result_path)],
+        cwd=REPO_DIR,
+    )
+
+
+class ExtensionPrompter:
+    """Asks, in a window of its own, about extensions the cloud has turned on
+    but this computer lacks. The service never waits for the answer: the
+    window runs as a separate process and is checked on later cycles."""
+
+    def __init__(self, launch=_launch_prompt, installed=shell_extensions.installed, clock=time.monotonic):
+        self.launch = launch
+        self.installed = installed
+        self.clock = clock
+        self.process: subprocess.Popen | None = None
+        self.not_before = 0.0
+
+    @staticmethod
+    def _paths() -> tuple[Path, Path]:
+        folder = config_module.STATE_DIR / "prompt"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder / "request.json", folder / "result.json"
+
+    def check(self, cfg: config_module.Config, engine: SyncEngine, backend: RcloneBackend) -> None:
+        self._collect(cfg, engine)
+        if self.process is not None or self.clock() < self.not_before:
+            return
+        missing = missing_extensions.find_missing(
+            engine.last_remote, cfg.disabled_modules, cfg.declined_extensions, self.installed())
+        if not missing:
+            return
+        names = missing_extensions.names_from_devices(registry_module.Registry(backend).list_devices())
+        request, result = self._paths()
+        result.unlink(missing_ok=True)
+        request.write_text(json.dumps({"extensions": [{"uuid": u, "name": names.get(u, u)} for u in missing]}))
+        logger.info("asking about missing extensions: %s", ", ".join(missing))
+        self.process = self.launch(request, result)
+
+    def _collect(self, cfg: config_module.Config, engine: SyncEngine) -> None:
+        if self.process is None or self.process.poll() is None:
+            return  # nothing asked, or the user is still looking at the window
+        returncode, self.process = self.process.returncode, None
+        request, result = self._paths()
+        request.unlink(missing_ok=True)
+        if not result.exists():
+            # Closed without choosing (or no display): ask again, but not at once.
+            self.not_before = self.clock() + PROMPT_COOLDOWN_SECONDS
+            logger.info("extension prompt ended without an answer (exit %s)", returncode)
+            return
+        answer = json.loads(result.read_text())
+        result.unlink(missing_ok=True)
+        cfg.declined_extensions = sorted({*cfg.declined_extensions, *answer.get("declined", [])})
+        config_module.save(cfg)
+        for uuid, reason in answer.get("failed", {}).items():
+            logger.warning("could not install %s: %s", uuid, reason)
+        installed = answer.get("installed", [])
+        if installed:
+            # Their cloud values were skipped while they were missing: apply them next cycle.
+            engine.forget_items(
+                [f"extensions.{u}" for u in installed] + [f"extensions.{u}#prefs" for u in installed] + ["layout.all"])
+
+
+_prompter = ExtensionPrompter()
 
 
 def tick(cfg: config_module.Config) -> str:
@@ -36,7 +111,9 @@ def tick(cfg: config_module.Config) -> str:
     registry_module.register_this_device(registry_module.Registry(backend), cfg, modules)
 
     engine = SyncEngine(backend, modules, config_module.STATE_DIR)
-    return engine.sync_once(cfg.disabled_modules)
+    result = engine.sync_once(cfg.disabled_modules)
+    _prompter.check(cfg, engine, backend)
+    return result
 
 
 def read_status() -> dict:

@@ -105,6 +105,15 @@ def cmd_service(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reset_extension_prompts(args: argparse.Namespace) -> int:
+    cfg = config_module.load()
+    forgotten = cfg.declined_extensions
+    cfg.declined_extensions = []
+    config_module.save(cfg)
+    print(f"Will ask again about: {', '.join(forgotten) if forgotten else '(nothing was declined)'}")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = config_module.load()
     print(f"remote:    {cfg.remote_name}")
@@ -142,6 +151,10 @@ def main(argv: list[str] | None = None) -> int:
     service_p = sub.add_parser("service", help="enable or disable the background sync service")
     service_p.add_argument("action", choices=["enable", "disable"])
     service_p.set_defaults(func=cmd_service)
+
+    reset_p = sub.add_parser(
+        "reset-extension-prompts", help="forget the missing extensions you declined, so you are asked about them again")
+    reset_p.set_defaults(func=cmd_reset_extension_prompts)
 
     status_p = sub.add_parser("status", help="show current config")
     status_p.set_defaults(func=cmd_status)
