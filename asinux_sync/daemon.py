@@ -10,13 +10,14 @@ import json
 import logging
 import signal
 import subprocess
+import tarfile
 import sys
 import threading
 import time
 from pathlib import Path
 
 from . import config as config_module
-from . import missing_extensions
+from . import device_requests, missing_extensions, theme_requests
 from . import registry as registry_module
 from .cloud.rclone import RcloneBackend, RcloneError, is_installed
 from .engine import SyncEngine
@@ -97,6 +98,8 @@ class ExtensionPrompter:
 
 
 _prompter = ExtensionPrompter()
+# Every kind of thing devices can ask each other for (see device_requests.py).
+_requests = device_requests.RequestBoard([theme_requests.ThemeHandler()])
 
 
 def tick(cfg: config_module.Config) -> str:
@@ -119,6 +122,11 @@ def tick(cfg: config_module.Config) -> str:
     engine = SyncEngine(backend, modules, config_module.STATE_DIR)
     result = engine.sync_once(cfg.disabled_modules)
     _prompter.check(cfg, engine, backend)
+    try:
+        _requests.check(cfg, engine, backend, registry)
+    except (RcloneError, OSError, ValueError, tarfile.TarError) as exc:
+        # Asking for or sending something must not mark the whole sync as failed.
+        logger.warning("device requests: %s", exc)
     return result
 
 

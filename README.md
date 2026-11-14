@@ -138,6 +138,52 @@ w `config.json`) i więcej o nie nie pyta. Zamknięcie okna bez wyboru to „zap
 odmów. Po instalacji jego ustawienia z chmury stosują się w następnym cyklu. Żeby znów być
 pytanym: `python3 -m asinux_sync.cli reset-extension-prompts`.
 
+### Prośby między urządzeniami
+
+Gdy jednemu komputerowi czegoś brakuje, a inny to ma, komputery proszą się o to przez jeden
+wspólny plik w chmurze:
+
+```
+asinux-sync/requests.json          wszystkie otwarte prośby, każdego rodzaju (pole "kind")
+asinux-sync/requests/<id>.tar.gz   to, co inne urządzenie wysłało w odpowiedzi
+```
+
+Każdy wpis ma `id`, `kind`, `key`, `data`, `requester`, `status` (`pending` → `sent` albo
+`failed` z `reason`) i informację, kto i kiedy wysłał. W każdym cyklu urządzenie:
+1. odbiera to, o co prosiło: instaluje wysłane archiwum, usuwa prośbę i archiwum;
+2. odpowiada na cudze prośby, jeśli ma to, o co chodzi;
+3. dopisuje prośby o to, czego mu brakuje, i usuwa te, które przestały być potrzebne.
+
+Prośby urządzeń usuniętych z konta i archiwa bez prośby sprząta ten, kto je zobaczy. Wszystkie
+urządzenia piszą do tego samego pliku, a dyski w chmurze nie mają blokad, więc dwa zapisy
+w jednej chwili mogą się nadpisać. Zmiany są nakładane na świeżo pobraną kopię tuż przed zapisem,
+a każdy krok jest powtarzany w następnym cyklu, jeśli przepadł. O tym, że coś wysłano, świadczy
+obecność archiwum, a nie sam status. Prośba `failed` nie jest ponawiana; żeby spróbować jeszcze
+raz, usuń jej wpis z `requests.json`.
+
+Nowy rodzaj prośby to podklasa `RequestHandler` w `asinux_sync/device_requests.py` (`wanted`,
+`satisfied`, `can_send`, `pack`, `receive`, `done`) dodana do listy w `daemon.py`.
+
+#### Rodzaj `theme`: brakujące motywy, ikony i kursory
+
+Motyw zainstalowany w katalogu domowym jedzie razem z profilem. Motyw systemowy
+(`/usr/share/icons`, `/usr/share/themes`, np. z pakietu) nie, bo zwykle jest na każdym
+komputerze. Gdy go brakuje (motyw aplikacji GTK, ikony, kursor, motyw shella):
+
+1. Komputer A widzi, że profil chce np. ikon „Hatter-Purple”, których nie ma. Nie przełącza się
+   na brakujący motyw (zostaje przy swoim) i dodaje prośbę `{"item": "icon_theme", "name":
+   "Hatter-Purple"}`.
+2. Komputer B znajduje folder w `~/.icons`, `~/.local/share/icons` albo `/usr/share/icons` (dla
+   motywów: `~/.themes`, `~/.local/share/themes`, `/usr/share/themes`) i go wysyła. Linki
+   symboliczne wskazujące poza folder są zastępowane plikami.
+3. Komputer A rozpakowuje go do `~/.local/share/icons` (albo `~/.local/share/themes`) i w
+   następnym cyklu przełącza się na motyw z profilu.
+
+Ikony i kursory, które dziedziczą po innych (`Inherits=` w `index.theme`), dociągają brakujących
+przodków tak samo. Pobrany motyw dostaje znacznik `.asinux-sync-transfer`, żeby nie był potem
+wysyłany do chmury jako „własny” motyw użytkownika. Folder większy niż 1 GB nie jest wysyłany
+(`failed`).
+
 Testy modułów używają backendu pamięciowego GSettings, więc nigdy nie zmieniają prawdziwych ustawień.
 
 ## Układ danych w chmurze
@@ -146,6 +192,8 @@ Testy modułów używają backendu pamięciowego GSettings, więc nigdy nie zmie
 asinux-sync/account.json        username, nazwa wyświetlana, język/region/klawiatura
 asinux-sync/devices/<id>.json   urządzenie: nazwa, wyłączone moduły, last_seen
 asinux-sync/profile/            zsynchronizowany profil (profile.json + assets/)
+asinux-sync/requests.json       prośby między urządzeniami (np. o brakujący motyw)
+asinux-sync/requests/           to, co wysłano w odpowiedzi na prośby (.tar.gz)
 ```
 
 ## Struktura

@@ -173,6 +173,9 @@ class RcloneBackend:
     def copyto(self, local_file: str, remote_path: str) -> None:
         _run(["rclone", "copyto", local_file, self._path(remote_path)])
 
+    def download(self, remote_path: str, local_file: str) -> None:
+        _run(["rclone", "copyto", self._path(remote_path), local_file])
+
     def cat(self, remote_path: str) -> bytes:
         result = _run(["rclone", "cat", self._path(remote_path)], text=False)
         return result.stdout
