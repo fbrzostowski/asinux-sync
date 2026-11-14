@@ -130,7 +130,7 @@ def test_installed_extensions_get_their_cloud_settings_applied_next_cycle(monkey
     h.check()
     h.answer(installed=["a@x"], declined=["c@x", "d@x"])
     h.check()
-    assert set(h.forgotten) == {"extensions.a@x", "extensions.a@x#prefs", "layout.all"}
+    assert set(h.forgotten) == {"extensions.a@x", "extensions.a@x#prefs", "layout.all", "appearance.shell_theme"}
 
 
 def test_closing_the_window_asks_again_but_not_at_once(monkeypatch):

@@ -27,7 +27,7 @@ import tempfile
 from pathlib import Path
 
 from .device_requests import RequestHandler
-from .modules import appearance
+from .modules import appearance, gsettings_util
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +130,8 @@ class ThemeHandler(RequestHandler):
             data = items.get(item_id)
             if not data or f"appearance.{item_id}" in disabled:
                 continue
+            if gsettings_util.schema(appearance.THEME_ITEMS[item_id][0]) is None:
+                continue  # e.g. the Shell theme without the User Themes extension: nothing would use it
             shipped = (data.get("theme") or {}).get("name")
             for name in appearance.missing(item_id, appearance.wanted_name(item_id, data)):
                 if name != shipped:  # that one comes with the profile

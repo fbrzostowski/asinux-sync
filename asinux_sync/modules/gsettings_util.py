@@ -9,6 +9,7 @@ extension that isn't installed, an older GNOME) are skipped, never errors.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import gi
 
@@ -18,9 +19,46 @@ from gi.repository import Gio, GLib  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+def _extension_roots() -> list[Path]:
+    return [Path(GLib.get_user_data_dir()) / "gnome-shell" / "extensions"] + [
+        Path(d) / "gnome-shell" / "extensions" for d in GLib.get_system_data_dirs()]
+
+
+# schemas dir -> (mtime of its gschemas.compiled, the source read from it)
+_sources: dict[str, tuple[float, Gio.SettingsSchemaSource]] = {}
+
+
+def _extension_sources():
+    """Schema sources of installed GNOME Shell extensions. An extension
+    installed in the user's home (e.g. User Themes from extensions.gnome.org)
+    ships its schema in its own folder, where GSettings doesn't look."""
+    default = Gio.SettingsSchemaSource.get_default()
+    for root in _extension_roots():
+        for folder in sorted(root.glob("*/schemas")):
+            compiled = folder / "gschemas.compiled"
+            try:
+                mtime = compiled.stat().st_mtime
+            except OSError:
+                continue
+            cached = _sources.get(str(folder))
+            if cached is None or cached[0] != mtime:
+                try:
+                    cached = (mtime, Gio.SettingsSchemaSource.new_from_directory(str(folder), default, False))
+                except GLib.Error:
+                    continue
+                _sources[str(folder)] = cached
+            yield cached[1]
+
+
 def schema(schema_id: str) -> Gio.SettingsSchema | None:
     source = Gio.SettingsSchemaSource.get_default()
-    return source.lookup(schema_id, True) if source else None
+    found = source.lookup(schema_id, True) if source else None
+    if found is None:
+        for extension_source in _extension_sources():
+            found = extension_source.lookup(schema_id, False)
+            if found is not None:
+                break
+    return found
 
 
 def settings(schema_id: str, path: str | None = None) -> Gio.Settings | None:

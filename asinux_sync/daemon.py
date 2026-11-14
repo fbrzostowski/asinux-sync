@@ -94,7 +94,9 @@ class ExtensionPrompter:
         if installed:
             # Their cloud values were skipped while they were missing: apply them next cycle.
             engine.forget_items(
-                [f"extensions.{u}" for u in installed] + [f"extensions.{u}#prefs" for u in installed] + ["layout.all"])
+                [f"extensions.{u}" for u in installed] + [f"extensions.{u}#prefs" for u in installed]
+                # layout: extension settings; shell_theme: needs the User Themes extension.
+                + ["layout.all", "appearance.shell_theme"])
 
 
 _prompter = ExtensionPrompter()

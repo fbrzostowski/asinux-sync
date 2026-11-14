@@ -1311,3 +1311,25 @@ def test_profile_picture_without_accountsservice(assets_dir, monkeypatch):
     monkeypatch.setattr(profile_picture, "_user_proxy", unavailable)
     with pytest.raises(ModuleUnavailable):
         ProfilePictureModule().capture(assets_dir)
+
+
+def test_shell_theme_is_found_in_an_extension_installed_in_home(assets_dir, isolated_home, monkeypatch, tmp_path):
+    """User Themes from extensions.gnome.org keeps its schema in its own folder."""
+    import subprocess
+
+    from asinux_sync.modules import gsettings_util
+
+    schemas = tmp_path / "extensions/user-theme@test/schemas"
+    schemas.mkdir(parents=True)
+    (schemas / "org.gnome.shell.extensions.user-theme-test.gschema.xml").write_text(
+        '<schemalist><schema id="org.gnome.shell.extensions.user-theme-test" '
+        'path="/org/gnome/shell/extensions/user-theme-test/">'
+        '<key name="name" type="s"><default>""</default></key></schema></schemalist>')
+    subprocess.run(["glib-compile-schemas", str(schemas)], check=True)
+    monkeypatch.setattr(gsettings_util, "_extension_roots", lambda: [tmp_path / "extensions"])
+
+    found = gsettings_util.schema("org.gnome.shell.extensions.user-theme-test")
+    assert found is not None
+    gsettings_util.apply_keys("org.gnome.shell.extensions.user-theme-test", ("name",), {"name": "'MyShell'"})
+    assert gsettings_util.capture_keys("org.gnome.shell.extensions.user-theme-test", ("name",)) == {"name": "'MyShell'"}
+    assert gsettings_util.schema("org.gnome.shell.extensions.not-installed") is None
