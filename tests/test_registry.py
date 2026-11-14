@@ -114,3 +114,69 @@ def test_opt_in_modules_start_off_once_per_device(tmp_path, monkeypatch):
     fresh = config_module.Config(device_name="Laptop")
     registry_module.register_this_device(reg, fresh, modules)
     assert fresh.disabled_modules == ["layout", "power"]
+
+
+def _cfg_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_module, "CONFIG_PATH", tmp_path / "config.json")
+
+
+class DeletingBackend(FakeBackend):
+    def delete_file(self, path):
+        del self.files[path]
+
+
+def test_removed_device_is_hidden_and_forgets_itself_on_its_next_heartbeat(tmp_path, monkeypatch):
+    import pytest
+
+    _cfg_paths(tmp_path, monkeypatch)
+    reg = registry_module.Registry(DeletingBackend())
+    laptop = config_module.Config(device_name="Laptop")
+    registry_module.register_this_device(reg, laptop)
+    desktop = config_module.Config(device_name="Desktop", disabled_modules=["background"])
+    registry_module.register_this_device(reg, desktop)
+
+    reg.remove_device(laptop.device_id)  # from the desktop
+    assert [d["name"] for d in reg.list_devices()] == ["Desktop"]
+    with pytest.raises(Exception):
+        reg.set_device_module(laptop.device_id, "background", False)
+
+    # The laptop's next heartbeat must not bring it back.
+    removed_id = laptop.device_id
+    with pytest.raises(registry_module.DeviceRemoved):
+        registry_module.register_this_device(reg, laptop)
+    registry_module.forget_this_device(reg, laptop)
+    assert laptop.device_id == "" and laptop.disabled_modules == []
+    assert f"asinux-sync/devices/{removed_id}.json" not in reg.backend.files  # marker cleaned up
+    assert [d["name"] for d in reg.list_devices()] == ["Desktop"]
+
+
+def test_removing_this_device(tmp_path, monkeypatch):
+    _cfg_paths(tmp_path, monkeypatch)
+    reg = registry_module.Registry(DeletingBackend())
+    cfg = config_module.Config(device_name="Desktop", disabled_modules=["background"])
+    registry_module.register_this_device(reg, cfg)
+
+    registry_module.remove_this_device(reg, cfg)
+    assert cfg.device_id == "" and config_module.load().device_id == ""
+    assert reg.list_devices() == []
+
+    registry_module.register_this_device(reg, cfg)  # set up again: a new device
+    assert [d["name"] for d in reg.list_devices()] == ["Desktop"]
+
+
+def test_daemon_tick_stops_syncing_a_removed_device(tmp_path, monkeypatch):
+    from asinux_sync import daemon
+
+    _cfg_paths(tmp_path, monkeypatch)
+    backend = DeletingBackend()
+    cfg = config_module.Config(device_name="Laptop")
+    registry_module.register_this_device(registry_module.Registry(backend), cfg)
+    registry_module.Registry(backend).remove_device(cfg.device_id)
+
+    monkeypatch.setattr(daemon, "is_installed", lambda: True)
+    monkeypatch.setattr(daemon, "RcloneBackend", type("B", (), {
+        "is_configured": classmethod(lambda cls, name: True), "__new__": lambda cls, name: backend}))
+    assert daemon.tick(cfg) == "removed"
+    assert cfg.device_id == "" and backend.files == {}
+    assert daemon.tick(cfg) == "not-configured"

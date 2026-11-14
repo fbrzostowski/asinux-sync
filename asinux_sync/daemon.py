@@ -108,7 +108,13 @@ def tick(cfg: config_module.Config) -> str:
     # Heartbeat first: it also adopts this device's module toggles, which may
     # have been changed from another device's panel.
     modules = {mid: cls() for mid, cls in REGISTRY.items()}
-    registry_module.register_this_device(registry_module.Registry(backend), cfg, modules)
+    registry = registry_module.Registry(backend)
+    try:
+        registry_module.register_this_device(registry, cfg, modules)
+    except registry_module.DeviceRemoved:
+        logger.info("this device was removed from the account - no longer syncing")
+        registry_module.forget_this_device(registry, cfg)
+        return "removed"
 
     engine = SyncEngine(backend, modules, config_module.STATE_DIR)
     result = engine.sync_once(cfg.disabled_modules)

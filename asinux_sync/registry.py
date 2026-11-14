@@ -2,7 +2,9 @@
 
 Layout:
   asinux-sync/account.json          username, display name, locale defaults
-  asinux-sync/devices/<id>.json     one file per device (name, disabled modules)
+  asinux-sync/devices/<id>.json     one file per device (name, disabled modules),
+                                    or {"id", "removed": true} once it has been
+                                    removed and has not noticed yet
   asinux-sync/profile/              the synced profile (engine.py owns this
                                     subtree - it is mirrored with `rclone sync`,
                                     so nothing else may live inside it)
@@ -21,6 +23,10 @@ from .cloud.rclone import RcloneBackend, RcloneError
 ROOT = "asinux-sync"
 ACCOUNT_PATH = f"{ROOT}/account.json"
 DEVICES_DIR = f"{ROOT}/devices"
+
+
+class DeviceRemoved(Exception):
+    """This device was removed from the account (possibly from another device)."""
 
 
 def now_iso() -> str:
@@ -48,9 +54,11 @@ class Registry:
             if entry.get("IsDir") or not entry["Name"].endswith(".json"):
                 continue
             try:
-                devices.append(json.loads(self.backend.cat(f"{DEVICES_DIR}/{entry['Name']}")))
+                device = json.loads(self.backend.cat(f"{DEVICES_DIR}/{entry['Name']}"))
             except (RcloneError, ValueError):
                 continue
+            if not device.get("removed"):
+                devices.append(device)
         devices.sort(key=lambda d: d.get("name", "").lower())
         return devices
 
@@ -59,6 +67,17 @@ class Registry:
         if not self.backend.exists_file(path):
             return None
         return json.loads(self.backend.cat(path))
+
+    def remove_device(self, device_id: str) -> None:
+        """Take a device off the account.
+
+        Its entry is replaced by a marker instead of being deleted: a device
+        that is still running would otherwise just re-register on its next
+        heartbeat. When it sees the marker it forgets its registration and
+        deletes the marker (see forget_this_device)."""
+        self.backend.rcat(
+            f"{DEVICES_DIR}/{device_id}.json",
+            json.dumps({"id": device_id, "removed": True, "removed_at": now_iso()}, indent=2).encode())
 
     def save_device(self, device: dict) -> None:
         self.backend.rcat(f"{DEVICES_DIR}/{device['id']}.json", json.dumps(device, indent=2).encode())
@@ -70,7 +89,7 @@ class Registry:
     def set_device_keys(self, device_id: str, changes: dict[str, bool]) -> dict:
         """Apply several on (True) / off (False) switches in one write."""
         device = self.get_device(device_id)
-        if device is None:
+        if device is None or device.get("removed"):
             raise RcloneError("device is no longer registered")
         disabled = set(device.get("disabled_modules", []))
         for key, enabled in changes.items():
@@ -129,6 +148,8 @@ def register_this_device(registry: Registry, cfg: config_module.Config, modules:
     if not cfg.device_id:
         cfg.device_id = uuid.uuid4().hex
     existing = registry.get_device(cfg.device_id)
+    if existing is not None and existing.get("removed"):
+        raise DeviceRemoved(cfg.device_id)
     if existing is not None:
         cfg.disabled_modules = list(existing.get("disabled_modules", []))
         cfg.defaults_applied = list(existing.get("defaults_applied", cfg.defaults_applied))
@@ -146,3 +167,33 @@ def register_this_device(registry: Registry, cfg: config_module.Config, modules:
         }
     )
     config_module.save(cfg)
+
+
+def forget_this_device(registry: Registry | None, cfg: config_module.Config) -> None:
+    """Drop this device's registration locally, so it stops syncing and the
+    panel offers to set it up again (as a new device). Also clears the cloud
+    marker left by Registry.remove_device, if there is one."""
+    device_id = cfg.device_id
+    cfg.device_id = ""
+    cfg.disabled_modules = []
+    cfg.defaults_applied = []
+    config_module.save(cfg)
+    if registry is not None and device_id:
+        try:
+            existing = registry.get_device(device_id)
+            if existing is not None and existing.get("removed"):
+                registry.backend.delete_file(f"{DEVICES_DIR}/{device_id}.json")
+        except (RcloneError, ValueError):
+            pass  # a stale marker is harmless: list_devices() hides it
+
+
+def remove_this_device(registry: Registry, cfg: config_module.Config) -> None:
+    """Remove the device this runs on from the account.
+
+    The marker is written before the local registration is dropped, so a
+    heartbeat already under way in the background service can't bring the
+    entry back. It stays in the cloud (hidden) as nothing here will look for
+    it again."""
+    if cfg.device_id:
+        registry.remove_device(cfg.device_id)
+    forget_this_device(None, cfg)

@@ -63,6 +63,7 @@ _RESULT_TEXT = {
     "pushed": "uploaded this device's changes",
     "pulled": "applied changes from the cloud",
     "not-configured": "not set up yet",
+    "removed": "this device was removed from your account",
 }
 
 
@@ -464,6 +465,11 @@ class SyncWindow(Adw.ApplicationWindow):
             account = self.registry.load_account() or {}
             devices = self.registry.list_devices()
             mine = next((d for d in devices if d["id"] == self.cfg.device_id), None)
+            if mine is None:
+                entry = self.registry.get_device(self.cfg.device_id)
+                if entry is not None and entry.get("removed"):
+                    registry_module.forget_this_device(self.registry, self.cfg)
+                    return {"removed": True}
             if mine is not None:
                 self.cfg.disabled_modules = list(mine.get("disabled_modules", []))
                 config_module.save(self.cfg)
@@ -472,6 +478,10 @@ class SyncWindow(Adw.ApplicationWindow):
             return fetched
 
         def done(fetched, error):
+            if not error and fetched.get("removed"):
+                self._toast("This device was removed from your account")
+                self._show_setup()
+                return GLib.SOURCE_REMOVE
             if error:
                 if self.cached:
                     self._show_account_and_devices(
@@ -551,6 +561,14 @@ class SyncWindow(Adw.ApplicationWindow):
         no_results.add(Adw.ActionRow(title="Nothing matches your search", use_markup=False))
         page.add(no_results)
 
+        remove_group = Adw.PreferencesGroup()
+        remove_button = Gtk.Button(label="Remove Device", halign=Gtk.Align.CENTER)
+        remove_button.add_css_class("destructive-action")
+        remove_button.add_css_class("pill")
+        remove_button.connect("clicked", lambda _b: self._confirm_remove_device(device, is_me))
+        remove_group.add(remove_button)
+        page.add(remove_group)
+
         def filter_rows(query):
             query = query.strip()
             any_visible = False
@@ -571,9 +589,49 @@ class SyncWindow(Adw.ApplicationWindow):
                 group.set_visible(group_visible)
                 any_visible = any_visible or group_visible
             intro.set_visible(not query)
+            remove_group.set_visible(not query)
             no_results.set_visible(bool(query) and not any_visible)
 
         self.nav.push(self._searchable_page(device.get("name", "Device"), page, filter_rows))
+
+    def _confirm_remove_device(self, device, is_me):
+        name = device.get("name", "this device")
+        if is_me:
+            body = ("This computer stops syncing and is removed from your account. Its current settings "
+                    "stay as they are. You can set it up again later.")
+        else:
+            body = (f"{name} is removed from your account and stops syncing the next time it is online. "
+                    "Its current settings stay as they are, and it can be set up again later.")
+        dialog = Adw.AlertDialog(heading=f"Remove {name}?", body=body)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("remove", "Remove")
+        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        dialog.connect("response", lambda _d, response: response == "remove" and self._remove_device(device, is_me))
+        dialog.present(self)
+
+    def _remove_device(self, device, is_me):
+        def work():
+            with self._toggle_lock:
+                if is_me:
+                    registry_module.remove_this_device(self.registry, self.cfg)
+                else:
+                    self.registry.remove_device(device["id"])
+
+        def done(_result, error):
+            if error:
+                self._toast(f"Couldn't remove the device: {error}")
+            elif is_me:
+                self._toast("This device was removed from your account")
+                self._show_setup()
+            else:
+                self._toast(f"Removed {device.get('name', 'the device')}")
+                self.nav.pop()
+                self._reload_main()
+            return GLib.SOURCE_REMOVE
+
+        self._run_async(work, done)
 
     def _searchable_page(self, title, content, on_query):
         """A page with a search button (and Ctrl+F, or just start typing)."""

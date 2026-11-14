@@ -59,7 +59,17 @@ python3 -m asinux_sync.cli pull
 
 # pokaż bieżącą konfigurację lokalną
 python3 -m asinux_sync.cli status
+
+# urządzenia na koncie; usunięcie urządzenia (po nazwie albo id)
+python3 -m asinux_sync.cli devices
+python3 -m asinux_sync.cli remove-device "Laptop"
 ```
+
+Urządzenie można też usunąć w panelu: wybierz je na liście i kliknij „Remove Device”. Usunięte
+urządzenie znika z listy od razu, a samo przestaje synchronizować przy najbliższym cyklu, gdy
+będzie online (jego wpis w chmurze zastępuje znacznik `"removed": true`, żeby nie zarejestrowało
+się ponownie). Ustawienia na nim zostają bez zmian; można je później skonfigurować od nowa jako
+nowe urządzenie.
 
 Konfiguracja lokalna (nazwa remote'a rclone, id i nazwa urządzenia, lista
 wyłączonych modułów) żyje w `~/.config/asinux-sync/config.json` — to

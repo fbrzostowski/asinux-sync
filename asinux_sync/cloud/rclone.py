@@ -191,6 +191,9 @@ class RcloneBackend:
         if proc.returncode != 0:
             raise RcloneError(f"rclone rcat failed: {proc.stderr.decode(errors='replace')}")
 
+    def delete_file(self, remote_path: str) -> None:
+        _run(["rclone", "deletefile", self._path(remote_path)])
+
     def lsjson(self, remote_path: str = "") -> list[dict]:
         result = _run(["rclone", "lsjson", self._path(remote_path)], check=False)
         if result.returncode != 0:

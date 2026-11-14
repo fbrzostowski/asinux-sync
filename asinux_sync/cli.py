@@ -114,6 +114,51 @@ def cmd_reset_extension_prompts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_devices(args: argparse.Namespace) -> int:
+    from . import registry as registry_module
+
+    cfg = config_module.load()
+    try:
+        devices = registry_module.Registry(RcloneBackend(cfg.remote_name)).list_devices()
+    except RcloneError as exc:
+        print(f"Couldn't list devices: {exc}", file=sys.stderr)
+        return 1
+    for device in devices:
+        mark = "  (this device)" if device["id"] == cfg.device_id else ""
+        print(f"{device['id']}  {device.get('name', 'Unnamed')}  [{device.get('hostname', '')}]"
+              f"  last seen {device.get('last_seen', 'never')}{mark}")
+    return 0
+
+
+def cmd_remove_device(args: argparse.Namespace) -> int:
+    from . import registry as registry_module
+
+    cfg = config_module.load()
+    registry = registry_module.Registry(RcloneBackend(cfg.remote_name))
+    try:
+        devices = registry.list_devices()
+        wanted = args.device
+        matches = [d for d in devices if d["id"] == wanted] or \
+                  [d for d in devices if d.get("name", "").lower() == wanted.lower()]
+        if not matches:
+            print(f"No device called '{wanted}' (see `devices`).", file=sys.stderr)
+            return 1
+        if len(matches) > 1:
+            print(f"Several devices are called '{wanted}' - use the id (see `devices`).", file=sys.stderr)
+            return 1
+        device = matches[0]
+        if device["id"] == cfg.device_id:
+            registry_module.remove_this_device(registry, cfg)
+            print(f"Removed this device ({device.get('name')}). It no longer syncs; set it up again in Asinux Sync.")
+        else:
+            registry.remove_device(device["id"])
+            print(f"Removed {device.get('name')}. It stops syncing the next time it is online.")
+    except RcloneError as exc:
+        print(f"Couldn't remove the device: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = config_module.load()
     print(f"remote:    {cfg.remote_name}")
@@ -155,6 +200,14 @@ def main(argv: list[str] | None = None) -> int:
     reset_p = sub.add_parser(
         "reset-extension-prompts", help="forget the missing extensions you declined, so you are asked about them again")
     reset_p.set_defaults(func=cmd_reset_extension_prompts)
+
+    devices_p = sub.add_parser("devices", help="list the devices on your account")
+    devices_p.set_defaults(func=cmd_devices)
+
+    remove_p = sub.add_parser(
+        "remove-device", help="remove a device from your account (it stops syncing; its settings stay)")
+    remove_p.add_argument("device", help="device name or id (see `devices`)")
+    remove_p.set_defaults(func=cmd_remove_device)
 
     status_p = sub.add_parser("status", help="show current config")
     status_p.set_defaults(func=cmd_status)
