@@ -167,22 +167,33 @@ setup_asc() {
     fi
 }
 
-# The same three links ASC uses on the machine it was developed on: the app
-# launcher, and the GNOME Shell search provider (which needs its .ini where
-# Shell looks for it and a D-Bus service file to be started on demand).
-link_launchers() {
-    log "Linking the launcher and the search provider"
+# ASC's launcher and its GNOME Shell search provider (the .ini where Shell
+# looks for it plus a D-Bus service file to start it on demand), installed
+# system-wide like ASC's own install.sh does. Links that older versions of
+# this script left in ~/.local/share are removed: user entries take
+# precedence over /usr/share and would hide the system ones.
+install_launchers() {
+    log "Installing the launcher and the search provider in /usr/share"
     [ "$PREFIX" = "/opt" ] || warn "the launchers point at /opt/asinux-system-configuration, not $ASC_DIR"
-    local data="$HOME/.local/share"
-    run mkdir -p "$data/applications" "$data/dbus-1/services" \
-        "$data/flatpak/exports/share/gnome-shell/search-providers"
-    run ln -sfn "$ASC_DIR/com.asinux.SystemConfiguration.desktop" \
-        "$data/applications/com.asinux.SystemConfiguration.desktop"
-    run ln -sfn "$ASC_DIR/com.asinux.SystemConfiguration.SearchProvider.service" \
-        "$data/dbus-1/services/com.asinux.SystemConfiguration.SearchProvider.service"
-    run ln -sfn "$ASC_DIR/com.asinux.SystemConfiguration.search-provider.ini" \
-        "$data/flatpak/exports/share/gnome-shell/search-providers/com.asinux.SystemConfiguration.search-provider.ini"
+    local id="com.asinux.SystemConfiguration"
+    run sudo install -Dm644 "$ASC_DIR/$id.desktop" "/usr/share/applications/$id.desktop"
+    run sudo install -Dm644 "$ASC_DIR/$id.search-provider.ini" \
+        "/usr/share/gnome-shell/search-providers/$id.search-provider.ini"
+    run sudo install -Dm644 "$ASC_DIR/$id.SearchProvider.service" \
+        "/usr/share/dbus-1/services/$id.SearchProvider.service"
     if command -v update-desktop-database >/dev/null 2>&1; then
+        run sudo update-desktop-database -q /usr/share/applications || true
+    fi
+
+    local data="$HOME/.local/share" link
+    for link in "$data/applications/$id.desktop" \
+                "$data/dbus-1/services/$id.SearchProvider.service" \
+                "$data/flatpak/exports/share/gnome-shell/search-providers/$id.search-provider.ini"; do
+        if [ -L "$link" ]; then
+            run rm -f "$link"
+        fi
+    done
+    if command -v update-desktop-database >/dev/null 2>&1 && [ -d "$data/applications" ]; then
         run update-desktop-database "$data/applications" || true
     fi
 }
@@ -240,7 +251,7 @@ main() {
     setup_sync
     if [ "$SETUP_ASC" -eq 1 ]; then
         setup_asc
-        link_launchers
+        install_launchers
     fi
     verify
     restart_service

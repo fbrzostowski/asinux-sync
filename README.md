@@ -23,7 +23,7 @@ silnik synchronizacji (`asinux_sync/engine.py`) i jeden moduł — `background`
 ## Instalacja na nowym komputerze
 
 ```bash
-# Fedora + GNOME: pakiety, repozytoria w /opt, launcher i dostawca wyszukiwania
+# Fedora + GNOME: pakiety, repozytoria w /opt, launcher i dostawca wyszukiwania w /usr/share
 curl -fsSL https://raw.githubusercontent.com/fbrzostowski/asinux-sync/master/setup.sh | bash
 
 # albo z klona, kopiując dokładny stan ASC z innego komputera (także niewypchnięte panele)
